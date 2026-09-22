@@ -113,7 +113,7 @@ class TrafficSimulator:
         self.metrics = ClientMetrics()
         self.stop_event = threading.Event()
 
-    def run(self) -> ClientSnapshot:
+    def run(self, *, show_dashboard: bool = True) -> ClientSnapshot:
         deadline = time.monotonic() + self.duration_seconds
         threads = [
             threading.Thread(
@@ -128,7 +128,11 @@ class TrafficSimulator:
             thread.start()
 
         try:
-            self._monitor(threads)
+            if show_dashboard:
+                self._monitor(threads)
+            else:
+                for thread in threads:
+                    thread.join()
         except KeyboardInterrupt:
             print("\nĐang dừng simulation...")
         finally:
@@ -137,7 +141,8 @@ class TrafficSimulator:
                 thread.join(4.0)
 
         snapshot = self.metrics.snapshot()
-        self._print_plain(snapshot, final=True)
+        if show_dashboard:
+            self._print_plain(snapshot, final=True)
         return snapshot
 
     def _worker(self, number: int, deadline: float) -> None:

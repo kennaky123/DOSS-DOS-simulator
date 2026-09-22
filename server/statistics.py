@@ -7,7 +7,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 
-from common.config import ACTIVE_CLIENT_WINDOW_SECONDS
+from common.config import ACTIVE_CLIENT_WINDOW_SECONDS, DEFENSE_ALERT_WINDOW_SECONDS
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,10 @@ class StatisticsSnapshot:
     bytes_received: int
     bytes_sent: int
     uptime_seconds: float
+    suspicious_requests: int
+    blocked_requests: int
+    defense_status: str
+    last_block_reason: str
 
 
 class ServerStatistics:
@@ -40,6 +44,11 @@ class ServerStatistics:
         self._bytes_sent = 0
         self._recent_requests: deque[float] = deque()
         self._active_clients: dict[tuple[str, str, str], float] = {}
+        self._suspicious_requests = 0
+        self._blocked_requests = 0
+        self._last_suspicious_at: float | None = None
+        self._last_blocked_at: float | None = None
+        self._last_block_reason = "-"
 
     def connection_opened(self) -> None:
         with self._lock:
@@ -78,6 +87,17 @@ class ServerStatistics:
             self._completed_requests += 1
             self._bytes_sent += bytes_sent
 
+    def defense_observation(self, *, suspicious: bool, blocked_reason: str | None) -> None:
+        now = time.monotonic()
+        with self._lock:
+            if suspicious:
+                self._suspicious_requests += 1
+                self._last_suspicious_at = now
+            if blocked_reason:
+                self._blocked_requests += 1
+                self._last_blocked_at = now
+                self._last_block_reason = blocked_reason
+
     def _discard_old(self, now: float) -> None:
         one_second_ago = now - 1.0
         while self._recent_requests and self._recent_requests[0] < one_second_ago:
@@ -98,6 +118,18 @@ class ServerStatistics:
                 if self._completed_requests
                 else 0.0
             )
+            if (
+                self._last_blocked_at is not None
+                and now - self._last_blocked_at <= DEFENSE_ALERT_WINDOW_SECONDS
+            ):
+                defense_status = "BLOCKING"
+            elif (
+                self._last_suspicious_at is not None
+                and now - self._last_suspicious_at <= DEFENSE_ALERT_WINDOW_SECONDS
+            ):
+                defense_status = "ELEVATED"
+            else:
+                defense_status = "NORMAL"
             return StatisticsSnapshot(
                 current_clients=len(self._active_clients),
                 current_connections=self._current_connections,
@@ -110,4 +142,8 @@ class ServerStatistics:
                 bytes_received=self._bytes_received,
                 bytes_sent=self._bytes_sent,
                 uptime_seconds=now - self._started_at,
+                suspicious_requests=self._suspicious_requests,
+                blocked_requests=self._blocked_requests,
+                defense_status=defense_status,
+                last_block_reason=self._last_block_reason,
             )

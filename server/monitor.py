@@ -51,6 +51,10 @@ class Dashboard:
         table.add_row("Requests / second", str(snapshot.requests_per_second))
         table.add_row("Successful", str(snapshot.successful_requests))
         table.add_row("Failed", str(snapshot.failed_requests))
+        table.add_row("Defense status", snapshot.defense_status)
+        table.add_row("Suspicious requests", str(snapshot.suspicious_requests))
+        table.add_row("Blocked requests", str(snapshot.blocked_requests))
+        table.add_row("Last block reason", snapshot.last_block_reason)
         table.add_row("Average server response", f"{snapshot.average_response_ms:.2f} ms")
         table.add_row("Bytes received", str(snapshot.bytes_received))
         table.add_row("Bytes sent", str(snapshot.bytes_sent))
@@ -67,6 +71,8 @@ class Dashboard:
                 f"connections={item.total_connections} total={item.total_requests} "
                 f"rps={item.requests_per_second} ok={item.successful_requests} "
                 f"failed={item.failed_requests} avg={item.average_response_ms:.2f}ms "
+                f"defense={item.defense_status} suspicious={item.suspicious_requests} "
+                f"blocked={item.blocked_requests} reason={item.last_block_reason} "
                 f"rx={item.bytes_received}B tx={item.bytes_sent}B "
                 f"uptime={item.uptime_seconds:.1f}s"
             )

@@ -7,9 +7,10 @@ import socket
 import threading
 
 from common.config import MAX_MESSAGE_BYTES
-from common.network_utils import SlidingWindowRateLimiter, is_lab_address
+from common.network_utils import is_lab_address
 from server.client_handler import log_network_event, process_udp_datagram
 from server.statistics import ServerStatistics
+from server.traffic_guard import TrafficGuard
 
 
 class UdpServer:
@@ -18,13 +19,13 @@ class UdpServer:
         host: str,
         port: int,
         statistics: ServerStatistics,
-        rate_limiter: SlidingWindowRateLimiter,
+        traffic_guard: TrafficGuard,
         stop_event: threading.Event,
     ) -> None:
         self.host = host
         self.port = port
         self.statistics = statistics
-        self.rate_limiter = rate_limiter
+        self.traffic_guard = traffic_guard
         self.stop_event = stop_event
         self._server_socket: socket.socket | None = None
 
@@ -53,7 +54,7 @@ class UdpServer:
                         data,
                         address,
                         self.statistics,
-                        self.rate_limiter,
+                        self.traffic_guard,
                     )
                     sent_bytes = 0
                     send_ok = False

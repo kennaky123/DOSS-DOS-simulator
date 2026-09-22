@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>NetGuard Lab</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+  <header class="topbar shell">
+    <a class="brand" href="/" aria-label="NetGuard Lab">
+      <span class="brand-mark"><i></i><i></i><i></i></span>
+      <span><strong>NETGUARD</strong><small>NETWORK LAB / 01</small></span>
+    </a>
+    <div class="top-status">
+      <span class="pulse" id="globalPulse"></span>
+      <span id="globalStatus">SYSTEM IDLE</span>
+      <time id="clock">--:--:--</time>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">CONTROL SURFACE · PRIVATE LAB ONLY</p>
+        <h1>Quan sát lưu lượng.<br><em>Phản ứng tức thời.</em></h1>
+        <p class="hero-copy">Điều phối TCP/UDP, chạy mô phỏng có giới hạn và theo dõi từng quyết định phòng thủ từ một giao diện duy nhất.</p>
+      </div>
+      <div class="radar" aria-hidden="true">
+        <div class="radar-grid"></div>
+        <div class="radar-sweep"></div>
+        <span class="node n1"></span><span class="node n2"></span><span class="node n3"></span>
+        <div class="radar-label">LIVE<br><b>TELEMETRY</b></div>
+      </div>
+    </section>
+
+    <section class="metric-grid" aria-label="Server metrics">
+      <article class="metric"><span>REQUESTS / SEC</span><strong id="rps">0</strong><small>live throughput</small></article>
+      <article class="metric"><span>ACTIVE CLIENTS</span><strong id="activeClients">0</strong><small>2 second window</small></article>
+      <article class="metric accent"><span>BLOCKED</span><strong id="blocked">0</strong><small id="blockReason">no active rule</small></article>
+      <article class="metric"><span>AVG RESPONSE</span><strong><span id="latency">0.00</span><sup>ms</sup></strong><small>server processing</small></article>
+    </section>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <section class="workspace">
+      <article class="panel control-panel">
+        <div class="panel-heading">
+          <div><p class="index">01 / SERVER</p><h2>Test server</h2></div>
+          <span class="state-pill" id="serverState">OFFLINE</span>
+        </div>
+        <form id="serverForm">
+          <div class="field-row">
+            <label><span>Bind address</span><input name="host" value="127.0.0.1" autocomplete="off"></label>
+            <label><span>Port</span><input name="port" type="number" value="9000" min="1" max="65535"></label>
+          </div>
+          <label><span>Protocol</span>
+            <select name="protocol"><option>BOTH</option><option>TCP</option><option>UDP</option></select>
+          </label>
+          <div class="button-row">
+            <button class="primary" type="submit" id="startServer">Khởi động server <b>→</b></button>
+            <button class="ghost danger" type="button" id="stopServer">Dừng</button>
+          </div>
+        </form>
+        <div class="server-foot">
+          <span><i class="dot cyan"></i> TCP connections <b id="connections">0</b></span>
+          <span><i class="dot violet"></i> Total requests <b id="totalRequests">0</b></span>
+        </div>
+      </article>
+
+      <article class="panel control-panel">
+        <div class="panel-heading">
+          <div><p class="index">02 / SIMULATOR</p><h2>Traffic scenario</h2></div>
+          <span class="state-pill" id="simulationState">READY</span>
+        </div>
+        <form id="simulationForm">
+          <div class="triple-row">
+            <label><span>Protocol</span><select name="protocol"><option>TCP</option><option>UDP</option></select></label>
+            <label class="wide"><span>Scenario</span><select name="mode" id="mode"><option>NORMAL</option><option>DOS_SIMULATION</option><option>DDOS_SIMULATION</option></select></label>
+          </div>
+          <div class="field-row target-row">
+            <label><span>Target</span><input name="host" value="127.0.0.1" autocomplete="off"></label>
+            <label><span>Port</span><input name="port" type="number" value="9000" min="1" max="65535"></label>
+          </div>
+          <div class="triple-row inputs-3">
+            <label><span>Clients</span><input name="clients" type="number" value="2" min="1"></label>
+            <label><span>Rate / client</span><input name="rate" type="number" value="1" min="0.1" step="0.1"></label>
+            <label><span>Duration (s)</span><input name="duration" type="number" value="10" min="1" max="60"></label>
+          </div>
+          <div class="button-row">
+            <button class="primary violet-button" type="submit" id="startSimulation">Chạy mô phỏng <b>▶</b></button>
+            <button class="ghost danger" type="button" id="stopSimulation">Dừng</button>
+          </div>
+        </form>
+      </article>
+
+      <article class="panel telemetry-panel">
+        <div class="panel-heading">
+          <div><p class="index">03 / DEFENSE</p><h2>Threat telemetry</h2></div>
+          <span class="shield-state normal" id="defenseState">NORMAL</span>
+        </div>
+        <div class="telemetry-main">
+          <div class="gauge-wrap">
+            <div class="gauge" id="gauge"><div><strong id="successRate">100</strong><sup>%</sup><span>SUCCESS</span></div></div>
+          </div>
+          <div class="telemetry-list">
+            <div><span>Successful</span><b id="successful">0</b></div>
+            <div><span>Failed</span><b id="failed">0</b></div>
+            <div><span>Suspicious</span><b id="suspicious">0</b></div>
+            <div><span>Data received</span><b id="bytesReceived">0 B</b></div>
+          </div>
+        </div>
+        <div class="rule-strip">
+          <span><i></i> GLOBAL <b>1000 r/s</b></span>
+          <span><i></i> SOURCE <b>250 r/s</b></span>
+          <span><i></i> CLIENT <b>40 r/s</b></span>
+        </div>
+      </article>
+
+      <article class="panel activity-panel">
+        <div class="panel-heading">
+          <div><p class="index">04 / RUN</p><h2>Simulation activity</h2></div>
+          <span class="mono" id="elapsed">00.0s</span>
+        </div>
+        <div class="activity-number"><strong id="sent">0</strong><span>REQUESTS SENT</span></div>
+        <div class="progress"><i id="progressBar"></i></div>
+        <div class="activity-stats">
+          <span>Successful <b id="simSuccessful">0</b></span>
+          <span>Failed <b id="simFailed">0</b></span>
+          <span>Average latency <b id="simLatency">0.00 ms</b></span>
+        </div>
+        <p class="safety-note"><span>LOCKED</span> Public IP, unlimited duration, spoofing và raw packets luôn bị vô hiệu hóa.</p>
+      </article>
+    </section>
+  </main>
+
+  <footer class="shell"><span>NETGUARD LAB v2.0</span><span>LOCAL / RFC1918</span><span>SAFE SIMULATION ENVIRONMENT</span></footer>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

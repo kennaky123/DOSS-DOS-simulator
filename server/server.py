@@ -16,12 +16,12 @@ sys.path.insert(0, project_root_text)
 
 from common import config
 from common.network_utils import (
-    SlidingWindowRateLimiter,
     validate_lab_address,
     validate_port,
 )
 from server.monitor import Dashboard
 from server.statistics import ServerStatistics
+from server.traffic_guard import TrafficGuard
 from server.tcp_server import TcpServer
 from server.udp_server import UdpServer
 
@@ -39,14 +39,14 @@ class TestServer:
         self._errors_lock = threading.Lock()
 
         # TCP và UDP dùng chung rate limit để tổng tải server luôn có trần.
-        limiter = SlidingWindowRateLimiter(config.MAX_SERVER_REQUESTS_PER_SECOND)
+        traffic_guard = TrafficGuard()
         if protocol in ("TCP", "BOTH"):
             self._services.append(
-                TcpServer(host, port, self.statistics, limiter, self.stop_event)
+                TcpServer(host, port, self.statistics, traffic_guard, self.stop_event)
             )
         if protocol in ("UDP", "BOTH"):
             self._services.append(
-                UdpServer(host, port, self.statistics, limiter, self.stop_event)
+                UdpServer(host, port, self.statistics, traffic_guard, self.stop_event)
             )
 
     def serve_forever(self) -> None:
@@ -57,6 +57,20 @@ class TestServer:
             self.protocol,
             config.DASHBOARD_INTERVAL_SECONDS,
         )
+        self.start()
+
+        try:
+            dashboard.run(self.stop_event)
+        finally:
+            self.shutdown()
+            self.join()
+        if self._service_errors:
+            raise OSError(f"Không thể khởi động server: {self._service_errors[0]}")
+
+    def start(self) -> None:
+        """Start socket services without a terminal dashboard (used by the web UI)."""
+        if self._threads:
+            raise RuntimeError("Server đã được khởi động.")
         self._threads = [
             threading.Thread(
                 target=self._run_service,
@@ -69,14 +83,20 @@ class TestServer:
         for thread in self._threads:
             thread.start()
 
-        try:
-            dashboard.run(self.stop_event)
-        finally:
-            self.shutdown()
-            for thread in self._threads:
-                thread.join(config.SOCKET_TIMEOUT_SECONDS + 2.0)
-        if self._service_errors:
-            raise OSError(f"Không thể khởi động server: {self._service_errors[0]}")
+    def join(self) -> None:
+        for thread in self._threads:
+            thread.join(config.SOCKET_TIMEOUT_SECONDS + 2.0)
+
+    @property
+    def running(self) -> bool:
+        return bool(self._threads) and not self.stop_event.is_set() and any(
+            thread.is_alive() for thread in self._threads
+        )
+
+    @property
+    def error_message(self) -> str | None:
+        with self._errors_lock:
+            return str(self._service_errors[0]) if self._service_errors else None
 
     def _run_service(self, service: TcpServer | UdpServer) -> None:
         try:

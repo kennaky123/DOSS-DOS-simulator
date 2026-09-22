@@ -11,10 +11,11 @@ from common.config import (
     MAX_CONCURRENT_CONNECTIONS,
     SOCKET_TIMEOUT_SECONDS,
 )
-from common.network_utils import SlidingWindowRateLimiter, is_lab_address
+from common.network_utils import is_lab_address
 from common.protocol import create_error, encode_json
 from server.client_handler import handle_tcp_client
 from server.statistics import ServerStatistics
+from server.traffic_guard import TrafficGuard
 
 
 class TcpServer:
@@ -23,13 +24,13 @@ class TcpServer:
         host: str,
         port: int,
         statistics: ServerStatistics,
-        rate_limiter: SlidingWindowRateLimiter,
+        traffic_guard: TrafficGuard,
         stop_event: threading.Event,
     ) -> None:
         self.host = host
         self.port = port
         self.statistics = statistics
-        self.rate_limiter = rate_limiter
+        self.traffic_guard = traffic_guard
         self.stop_event = stop_event
         self._server_socket: socket.socket | None = None
         self._slots = threading.BoundedSemaphore(MAX_CONCURRENT_CONNECTIONS)
@@ -75,6 +76,9 @@ class TcpServer:
             return
         self.statistics.connection_opened()
         if not self._slots.acquire(blocking=False):
+            self.statistics.defense_observation(
+                suspicious=True, blocked_reason="SERVER_BUSY"
+            )
             self._send_busy(client_socket)
             client_socket.close()
             self.statistics.connection_closed()
@@ -96,7 +100,7 @@ class TcpServer:
                 client_socket,
                 address,
                 self.statistics,
-                self.rate_limiter,
+                self.traffic_guard,
             )
         finally:
             self._slots.release()

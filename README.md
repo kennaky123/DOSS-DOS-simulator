@@ -323,3 +323,50 @@ Trên Python 3.14.4, server `BOTH` tại `127.0.0.1:19000` đã nhận:
 - Server tổng: 24 requests, 12 TCP connections, byte RX/TX được cập nhật.
 - Public IP và `0.0.0.0` bị từ chối; `Ctrl+C` đóng cả TCP và UDP sạch.
 
+## 20. Phòng thủ nhiều lớp (bản nâng cấp)
+
+Server dùng chung một `TrafficGuard` cho cả TCP và UDP, nên đổi giao thức không làm mới
+giới hạn. Mỗi request được kiểm tra trong cửa sổ trượt một giây theo ba lớp:
+
+| Lớp | Cảnh báo | Chặn |
+|---|---:|---:|
+| Toàn server | - | 1000 request/giây |
+| Một IP nguồn | 100 request/giây | 250 request/giây |
+| Một logical client trên một IP | 15 request/giây | 40 request/giây |
+
+Dashboard hiển thị `NORMAL`, `ELEVATED` hoặc `BLOCKING`, tổng request đáng ngờ, tổng request
+bị chặn và lý do chặn gần nhất. Các lý do gồm `CLIENT_RATE_LIMIT`, `SOURCE_RATE_LIMIT`,
+`GLOBAL_RATE_LIMIT` và `SERVER_BUSY`. State theo client/IP cũ được dọn để tránh tăng bộ nhớ
+không giới hạn.
+
+Chạy kiểm thử:
+
+```powershell
+python -m unittest discover -v
+```
+
+## 21. Web dashboard
+
+Khởi chạy giao diện web tại localhost, không cần cài thêm framework:
+
+```powershell
+python main.py web
+```
+
+Sau đó mở `http://127.0.0.1:8080`. Từ dashboard có thể:
+
+- Khởi động/dừng TCP, UDP hoặc server chạy đồng thời cả hai giao thức.
+- Chạy các kịch bản Normal, DoS Simulation và DDoS Simulation trong hard limit.
+- Theo dõi realtime RPS, client, connection, latency, request thành công/thất bại.
+- Xem trạng thái phòng thủ, request đáng ngờ, request bị chặn và lý do chặn.
+- Dừng simulation đang chạy mà không cần đóng web app.
+
+Nếu cần mở dashboard cho một máy khác trong private LAN, bind đúng IP private của máy chạy
+project (không dùng `0.0.0.0`):
+
+```powershell
+python main.py web --host 192.168.1.10 --port 8080
+```
+
+Web API chỉ nhận client từ localhost/RFC1918, chỉ nhận JSON nhỏ và tái sử dụng toàn bộ validation,
+rate limit cũng như giới hạn thời gian của CLI.

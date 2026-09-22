@@ -8,7 +8,7 @@ import sys
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Network DoS/DDoS Lab Simulator")
-    parser.add_argument("component", choices=("server", "client"))
+    parser.add_argument("component", choices=("server", "client", "web"))
     args, remaining = parser.parse_known_args()
     sys.argv = [sys.argv[0], *remaining]
 
@@ -16,12 +16,15 @@ def main() -> None:
         from server.server import main as run_server
 
         run_server()
-    else:
+    elif args.component == "client":
         from client.client import main as run_client
 
         run_client()
+    else:
+        from web.app import main as run_web
+
+        run_web()
 
 
 if __name__ == "__main__":
     main()
-
