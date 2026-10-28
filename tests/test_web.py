@@ -46,6 +46,31 @@ class WebControllerTests(unittest.TestCase):
         for filename in ("index.html", "app.css", "app.js"):
             self.assertTrue((STATIC_ROOT / filename).is_file())
 
+    def test_flash_crowd_mode_is_exposed_in_limits(self) -> None:
+        status = WebController().status()
+        self.assertIn("FLASH_CROWD", status["limits"]["modes"])
+
+    def test_defense_can_be_toggled_via_controller(self) -> None:
+        controller = WebController()
+        self.assertTrue(controller.status()["server"]["defenseEnabled"])
+        controller.set_defense({"enabled": False})
+        self.assertFalse(controller.status()["server"]["defenseEnabled"])
+        controller.set_defense({"enabled": True})
+        self.assertTrue(controller.status()["server"]["defenseEnabled"])
+
+    def test_live_service_portal_returns_catalog_when_server_online(self) -> None:
+        controller = WebController()
+        controller.start_server({"host": "127.0.0.1", "port": 19129, "protocol": "TCP"})
+        try:
+            res = controller.call_service(
+                {"host": "127.0.0.1", "port": 19129, "path": "/products"}
+            )
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["httpStatus"], 200)
+            self.assertIn("items", res["response"]["service"])
+        finally:
+            controller.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()

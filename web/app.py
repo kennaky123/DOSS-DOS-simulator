@@ -6,7 +6,9 @@ import argparse
 import json
 import logging
 import mimetypes
+import socket
 import threading
+import time
 from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +19,14 @@ from urllib.parse import urlsplit
 from client.simulator import TrafficSimulator
 from common import config
 from common.network_utils import is_lab_address, validate_lab_address, validate_port
+from common.protocol import (
+    ProtocolError,
+    create_request,
+    decode_json,
+    encode_json,
+    extract_request_path,
+    receive_tcp_message,
+)
 from server.server import TestServer, configure_logging
 
 WEB_ROOT = Path(__file__).resolve().parent
@@ -28,10 +38,18 @@ class WebController:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._server: TestServer | None = None
+        self._defense_enabled: bool = True
         self._simulator: TrafficSimulator | None = None
         self._simulation_thread: threading.Thread | None = None
         self._simulation_config: dict[str, Any] | None = None
         self._simulation_error: str | None = None
+
+    def set_defense(self, payload: dict[str, Any]) -> None:
+        enabled = bool(payload.get("enabled", not self._defense_enabled))
+        with self._lock:
+            self._defense_enabled = enabled
+            if self._server:
+                self._server.set_defense_enabled(enabled)
 
     def start_server(self, payload: dict[str, Any]) -> None:
         host = validate_lab_address(str(payload.get("host", config.DEFAULT_HOST)))
@@ -43,7 +61,11 @@ class WebController:
         with self._lock:
             if self._server and self._server.running:
                 raise ValueError("Server đang chạy. Hãy dừng server trước khi đổi cấu hình.")
-            server = TestServer(host, port, protocol)
+            if "defenseEnabled" in payload:
+                self._defense_enabled = bool(payload["defenseEnabled"])
+            server = TestServer(
+                host, port, protocol, defense_enabled=self._defense_enabled
+            )
             server.start()
             self._server = server
 
@@ -59,10 +81,14 @@ class WebController:
         port = validate_port(self._as_int(payload.get("port", config.DEFAULT_PORT), "Port"))
         protocol = str(payload.get("protocol", config.DEFAULT_PROTOCOL)).upper()
         mode = str(payload.get("mode", "NORMAL")).upper()
+        raw_ip_mode = payload.get("ip_mode")
+        ip_mode = str(raw_ip_mode).upper() if raw_ip_mode else None
         if protocol not in config.SUPPORTED_PROTOCOLS:
             raise ValueError("Protocol mô phỏng không hợp lệ.")
         if mode not in config.SIMULATION_MODES:
             raise ValueError("Chế độ mô phỏng không hợp lệ.")
+        if ip_mode is not None and ip_mode not in config.IP_MODES:
+            raise ValueError("Chế độ IP nguồn không hợp lệ.")
 
         defaults = config.MODE_DEFAULTS[mode]
         clients = self._as_int(payload.get("clients", defaults["clients"]), "Clients")
@@ -81,13 +107,16 @@ class WebController:
         with self._lock:
             if self._simulation_thread and self._simulation_thread.is_alive():
                 raise ValueError("Một simulation khác đang chạy.")
-            simulator = TrafficSimulator(host, port, protocol, mode, clients, rate, duration)
+            simulator = TrafficSimulator(
+                host, port, protocol, mode, clients, rate, duration, ip_mode=ip_mode
+            )
             self._simulator = simulator
             self._simulation_config = {
                 "host": host,
                 "port": port,
                 "protocol": protocol,
                 "mode": mode,
+                "ip_mode": simulator.ip_mode,
                 "clients": clients,
                 "rate": rate,
                 "duration": duration,
@@ -118,6 +147,64 @@ class WebController:
         if thread:
             thread.join(config.SOCKET_TIMEOUT_SECONDS + 1.0)
 
+    def call_service(self, payload: dict[str, Any]) -> dict[str, Any]:
+        path = extract_request_path(payload)
+        client_id = str(payload.get("client_id", "web_visitor_01")).strip() or "web_visitor_01"
+        with self._lock:
+            server = self._server
+        host = validate_lab_address(
+            str(payload.get("host") or (server.host if server else config.DEFAULT_HOST))
+        )
+        port = validate_port(
+            self._as_int(
+                payload.get("port") or (server.port if server else config.DEFAULT_PORT),
+                "Port",
+            )
+        )
+        server_proto = server.protocol if server and server.running else "TCP"
+        transport = "UDP" if server_proto == "UDP" else "TCP"
+
+        started_at = time.perf_counter()
+        try:
+            if transport == "TCP":
+                frame = encode_json(create_request(client_id, path=path), tcp_framed=True)
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(config.SOCKET_TIMEOUT_SECONDS)
+                    sock.connect((host, port))
+                    sock.sendall(frame)
+                    response, _ = receive_tcp_message(sock)
+            else:
+                datagram = encode_json(create_request(client_id, path=path), tcp_framed=False)
+                target_addr = (socket.gethostbyname(host), port)
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.settimeout(config.SOCKET_TIMEOUT_SECONDS)
+                    sock.sendto(datagram, target_addr)
+                    raw, _ = sock.recvfrom(config.MAX_MESSAGE_BYTES)
+                response = decode_json(raw)
+        except (OSError, ProtocolError):
+            latency_ms = round((time.perf_counter() - started_at) * 1_000, 2)
+            return {
+                "ok": False,
+                "httpStatus": 503,
+                "latencyMs": latency_ms,
+                "protocol": transport,
+                "target": f"{transport.lower()}://{host}:{port}{path}",
+                "response": {"status": "ERROR", "error": "SERVER_UNREACHABLE"},
+            }
+
+        latency_ms = round((time.perf_counter() - started_at) * 1_000, 2)
+        ok = response.get("status") == "OK"
+        err = response.get("error", "")
+        http_status = 200 if ok else (503 if err in ("SERVER_OVERLOADED", "SERVER_BUSY") else 429)
+        return {
+            "ok": ok,
+            "httpStatus": http_status,
+            "latencyMs": latency_ms,
+            "protocol": transport,
+            "target": f"{transport.lower()}://{host}:{port}{path}",
+            "response": response,
+        }
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             server = self._server
@@ -131,6 +218,7 @@ class WebController:
             "host": None,
             "port": None,
             "protocol": None,
+            "defenseEnabled": self._defense_enabled,
             "error": None,
             "metrics": None,
         }
@@ -140,6 +228,7 @@ class WebController:
                 host=server.host,
                 port=server.port,
                 protocol=server.protocol,
+                defenseEnabled=server.traffic_guard.enabled,
                 error=server.error_message,
                 metrics=asdict(server.statistics.snapshot()),
             )
@@ -208,9 +297,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         try:
             payload = self._read_json()
+            if path == "/api/service/request":
+                service_result = self.controller.call_service(payload)
+                self._send_json(
+                    {"ok": True, "service": service_result, "status": self.controller.status()}
+                )
+                return
             actions = {
                 "/api/server/start": lambda: self.controller.start_server(payload),
                 "/api/server/stop": self.controller.stop_server,
+                "/api/defense/toggle": lambda: self.controller.set_defense(payload),
                 "/api/simulation/start": lambda: self.controller.start_simulation(payload),
                 "/api/simulation/stop": self.controller.stop_simulation,
             }

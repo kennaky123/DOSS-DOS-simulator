@@ -27,11 +27,14 @@ from server.udp_server import UdpServer
 
 
 class TestServer:
-    def __init__(self, host: str, port: int, protocol: str) -> None:
+    def __init__(
+        self, host: str, port: int, protocol: str, *, defense_enabled: bool = True
+    ) -> None:
         self.host = validate_lab_address(host)
         self.port = validate_port(port)
         self.protocol = protocol
         self.statistics = ServerStatistics()
+        self.statistics.set_defense_enabled(defense_enabled)
         self.stop_event = threading.Event()
         self._services: list[TcpServer | UdpServer] = []
         self._threads: list[threading.Thread] = []
@@ -39,15 +42,23 @@ class TestServer:
         self._errors_lock = threading.Lock()
 
         # TCP và UDP dùng chung rate limit để tổng tải server luôn có trần.
-        traffic_guard = TrafficGuard()
+        self.traffic_guard = TrafficGuard(enabled=defense_enabled)
         if protocol in ("TCP", "BOTH"):
             self._services.append(
-                TcpServer(host, port, self.statistics, traffic_guard, self.stop_event)
+                TcpServer(
+                    host, port, self.statistics, self.traffic_guard, self.stop_event
+                )
             )
         if protocol in ("UDP", "BOTH"):
             self._services.append(
-                UdpServer(host, port, self.statistics, traffic_guard, self.stop_event)
+                UdpServer(
+                    host, port, self.statistics, self.traffic_guard, self.stop_event
+                )
             )
+
+    def set_defense_enabled(self, enabled: bool) -> None:
+        self.traffic_guard.set_enabled(enabled)
+        self.statistics.set_defense_enabled(enabled)
 
     def serve_forever(self) -> None:
         dashboard = Dashboard(
@@ -123,6 +134,11 @@ def parse_args() -> argparse.Namespace:
         default="BOTH",
         help="Mặc định chạy đồng thời TCP và UDP trên cùng số port",
     )
+    parser.add_argument(
+        "--no-defense",
+        action="store_true",
+        help="Tắt TrafficGuard để demo kịch bản server bị quá tải/sập",
+    )
     args = parser.parse_args()
     try:
         args.host = validate_lab_address(args.host)
@@ -152,7 +168,12 @@ def main() -> None:
     configure_console_encoding()
     args = parse_args()
     configure_logging()
-    server = TestServer(args.host, args.port, args.protocol)
+    server = TestServer(
+        args.host,
+        args.port,
+        args.protocol,
+        defense_enabled=not getattr(args, "no_defense", False),
+    )
     print(f"Starting server on {args.host}:{args.port} ({args.protocol})")
     try:
         server.serve_forever()

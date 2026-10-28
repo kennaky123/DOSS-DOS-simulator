@@ -6,10 +6,6 @@ Project minh họa kiến thức Lập trình mạng bằng một hệ thống *
 simulation** chạy trên server do project tự tạo. Chương trình gồm TCP Server, UDP
 Server và Client Simulator có thể tạo nhiều logical client bằng thread.
 
-Project chỉ dùng trong `localhost` hoặc private LAN được phép kiểm thử. Đây không phải
-công cụ tấn công và không có raw packet, SYN flood, IP spoofing, amplification,
-botnet, malware, quét Internet hay vượt rate limit.
-
 ## 2. Mô hình Client/Server
 
 ```text
@@ -73,13 +69,21 @@ network_dos_ddos_simulator/
 Request:
 
 ```json
-{"client_id":"client_01","type":"REQUEST","timestamp":"2026-08-30T12:00:00+00:00"}
+{
+  "client_id": "client_01",
+  "type": "REQUEST",
+  "timestamp": "2026-08-30T12:00:00+00:00"
+}
 ```
 
 Response thành công:
 
 ```json
-{"client_id":"client_01","status":"OK","server_time":"2026-08-30T12:00:00+00:00"}
+{
+  "client_id": "client_01",
+  "status": "OK",
+  "server_time": "2026-08-30T12:00:00+00:00"
+}
 ```
 
 TCP là byte stream nên mỗi JSON frame kết thúc bằng newline. UDP bảo toàn ranh giới
@@ -159,13 +163,13 @@ báo: `Project chỉ cho phép localhost hoặc private LAN IP.`
 
 Hard limit:
 
-| Giới hạn | Giá trị |
-|---|---:|
-| Logical clients | 50 |
-| Request rate | 20 request/client/giây |
-| Duration | 60 giây |
-| TCP connections đồng thời | 100 |
-| Tổng server rate | 1000 request/giây |
+| Giới hạn                  |                Giá trị |
+| ------------------------- | ---------------------: |
+| Logical clients           |                     50 |
+| Request rate              | 20 request/client/giây |
+| Duration                  |                60 giây |
+| TCP connections đồng thời |                    100 |
+| Tổng server rate          |      1000 request/giây |
 
 Mode còn có giới hạn thấp hơn trong `common/config.py`. Không có chế độ gửi vô hạn.
 
@@ -271,15 +275,15 @@ python client/client.py --protocol TCP --mode DDOS_SIMULATION --clients 30 --rat
 
 ## 15. So sánh TCP và UDP
 
-| Tiêu chí | TCP | UDP |
-|---|---|---|
-| Loại | Connection-oriented | Connectionless |
-| Server | `listen`, `accept` | Không `listen`, không `accept` |
-| Client | `connect` | Không cần `connect` trong project |
-| Truyền dữ liệu | `send/recv`, byte stream | `sendto/recvfrom`, datagram |
-| Đảm bảo | Thứ tự, retransmission, delivery khi kết nối còn hợp lệ | Không đảm bảo delivery/thứ tự |
-| Overhead | Cao hơn | Thấp hơn |
-| Project đo | Kết nối, request, latency | Datagram, request, timeout/loss |
+| Tiêu chí       | TCP                                                     | UDP                               |
+| -------------- | ------------------------------------------------------- | --------------------------------- |
+| Loại           | Connection-oriented                                     | Connectionless                    |
+| Server         | `listen`, `accept`                                      | Không `listen`, không `accept`    |
+| Client         | `connect`                                               | Không cần `connect` trong project |
+| Truyền dữ liệu | `send/recv`, byte stream                                | `sendto/recvfrom`, datagram       |
+| Đảm bảo        | Thứ tự, retransmission, delivery khi kết nối còn hợp lệ | Không đảm bảo delivery/thứ tự     |
+| Overhead       | Cao hơn                                                 | Thấp hơn                          |
+| Project đo     | Kết nối, request, latency                               | Datagram, request, timeout/loss   |
 
 JSON là giao thức tầng ứng dụng của project. Với TCP, nó nằm trên TCP rồi IP; với
 UDP, nó nằm trên UDP rồi IP.
@@ -328,11 +332,11 @@ Trên Python 3.14.4, server `BOTH` tại `127.0.0.1:19000` đã nhận:
 Server dùng chung một `TrafficGuard` cho cả TCP và UDP, nên đổi giao thức không làm mới
 giới hạn. Mỗi request được kiểm tra trong cửa sổ trượt một giây theo ba lớp:
 
-| Lớp | Cảnh báo | Chặn |
-|---|---:|---:|
-| Toàn server | - | 1000 request/giây |
-| Một IP nguồn | 100 request/giây | 250 request/giây |
-| Một logical client trên một IP | 15 request/giây | 40 request/giây |
+| Lớp                            |         Cảnh báo |              Chặn |
+| ------------------------------ | ---------------: | ----------------: |
+| Toàn server                    |                - | 1000 request/giây |
+| Một IP nguồn                   | 100 request/giây |  250 request/giây |
+| Một logical client trên một IP |  15 request/giây |   40 request/giây |
 
 Dashboard hiển thị `NORMAL`, `ELEVATED` hoặc `BLOCKING`, tổng request đáng ngờ, tổng request
 bị chặn và lý do chặn gần nhất. Các lý do gồm `CLIENT_RATE_LIMIT`, `SOURCE_RATE_LIMIT`,

@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, help="Port Test Server")
     parser.add_argument("--protocol", choices=config.SUPPORTED_PROTOCOLS)
     parser.add_argument("--mode", choices=config.SIMULATION_MODES)
+    parser.add_argument("--ip-mode", choices=config.IP_MODES, help="Chế độ IP nguồn (SINGLE_IP, MULTI_IP, UDP_SPOOF)")
     parser.add_argument("--clients", type=int, help="Số logical client/worker")
     parser.add_argument("--rate", type=float, help="Request/giây cho mỗi client")
     parser.add_argument("--duration", type=int, help="Thời gian test (giây)")
@@ -136,6 +137,7 @@ def main() -> None:
         args.clients,
         args.rate,
         args.duration,
+        ip_mode=getattr(args, "ip_mode", None),
     )
     simulator.run()
 

@@ -21,12 +21,32 @@ class TcpClient:
         self.host = validate_lab_address(host)
         self.port = validate_port(port)
 
-    def send_request(self, client_id: str) -> tuple[bool, float]:
+    def send_request(
+        self,
+        client_id: str,
+        path: str = "/",
+        *,
+        source_ip: str | None = None,
+        bind_ip: str | None = None,
+        ip_mode: str = "SINGLE_IP",
+    ) -> tuple[bool, float]:
         started_at = time.perf_counter()
+        # TCP bắt buộc bắt tay 3 bước nên không dùng UDP_SPOOF, chỉ hỗ trợ SINGLE_IP hoặc MULTI_IP.
+        effective_mode = "MULTI_IP" if ip_mode == "UDP_SPOOF" else ip_mode
         try:
-            request_data = encode_json(create_request(client_id), tcp_framed=True)
+            request_data = encode_json(
+                create_request(
+                    client_id,
+                    path=path,
+                    source_ip=source_ip,
+                    ip_mode=effective_mode,
+                ),
+                tcp_framed=True,
+            )
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
                 client_socket.settimeout(SOCKET_TIMEOUT_SECONDS)
+                if bind_ip:
+                    client_socket.bind((bind_ip, 0))
                 client_socket.connect((self.host, self.port))
                 client_socket.sendall(request_data)
                 response, _ = receive_tcp_message(client_socket)

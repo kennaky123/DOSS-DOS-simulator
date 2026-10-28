@@ -22,13 +22,31 @@ class UdpClient:
         self.port = validate_port(port)
         self._server_address = (socket.gethostbyname(self.host), self.port)
 
-    def send_request(self, client_id: str) -> tuple[bool, float]:
+    def send_request(
+        self,
+        client_id: str,
+        path: str = "/",
+        *,
+        source_ip: str | None = None,
+        bind_ip: str | None = None,
+        ip_mode: str = "SINGLE_IP",
+    ) -> tuple[bool, float]:
         started_at = time.perf_counter()
         try:
-            request_data = encode_json(create_request(client_id), tcp_framed=False)
+            request_data = encode_json(
+                create_request(
+                    client_id,
+                    path=path,
+                    source_ip=source_ip,
+                    ip_mode=ip_mode,
+                ),
+                tcp_framed=False,
+            )
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client_socket:
                 # UDP không đảm bảo phản hồi nên timeout là bắt buộc.
                 client_socket.settimeout(SOCKET_TIMEOUT_SECONDS)
+                if bind_ip:
+                    client_socket.bind((bind_ip, 0))
                 client_socket.sendto(request_data, self._server_address)
                 response_data, response_address = client_socket.recvfrom(MAX_MESSAGE_BYTES)
             response = decode_json(response_data)

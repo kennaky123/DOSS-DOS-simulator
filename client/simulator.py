@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import threading
 import time
 from collections import deque
@@ -9,6 +10,7 @@ from dataclasses import dataclass
 
 from client.tcp_client import TcpClient
 from client.udp_client import UdpClient
+from common import config
 from common.network_utils import validate_lab_address, validate_port
 
 try:
@@ -75,10 +77,11 @@ class ClientMetrics:
 
 
 class WorkerPacer:
-    """Giữ request rate riêng cho từng logical client."""
+    """Giữ request rate riêng cho từng logical client, hỗ trợ jitter cho người dùng thật."""
 
-    def __init__(self, requests_per_second: float) -> None:
+    def __init__(self, requests_per_second: float, *, jitter_ratio: float = 0.0) -> None:
         self._interval = 1.0 / requests_per_second
+        self._jitter_ratio = max(0.0, min(0.5, jitter_ratio))
         self._next_request = time.monotonic()
 
     def wait(self, stop_event: threading.Event, deadline: float) -> bool:
@@ -88,7 +91,11 @@ class WorkerPacer:
             return False
         if stop_event.wait(max(0.0, slot - time.monotonic())):
             return False
-        self._next_request = max(slot + self._interval, time.monotonic())
+        step = self._interval
+        if self._jitter_ratio > 0.0:
+            factor = random.uniform(1.0 - self._jitter_ratio, 1.0 + self._jitter_ratio)
+            step = self._interval * factor
+        self._next_request = max(slot + step, time.monotonic())
         return time.monotonic() < deadline
 
 
@@ -102,6 +109,8 @@ class TrafficSimulator:
         logical_clients: int,
         request_rate: float,
         duration_seconds: int,
+        *,
+        ip_mode: str | None = None,
     ) -> None:
         self.host = validate_lab_address(host)
         self.port = validate_port(port)
@@ -110,6 +119,14 @@ class TrafficSimulator:
         self.logical_clients = logical_clients
         self.request_rate = request_rate
         self.duration_seconds = duration_seconds
+        default_ip_mode = "SINGLE_IP" if mode == "DOS_SIMULATION" else "MULTI_IP"
+        chosen_ip_mode = (ip_mode or default_ip_mode).upper()
+        if chosen_ip_mode not in config.IP_MODES:
+            chosen_ip_mode = default_ip_mode
+        if self.protocol == "TCP" and chosen_ip_mode == "UDP_SPOOF":
+            # TCP cần bắt tay 3 bước nên tự động chuyển về MULTI_IP.
+            chosen_ip_mode = "MULTI_IP"
+        self.ip_mode = chosen_ip_mode
         self.metrics = ClientMetrics()
         self.stop_event = threading.Event()
 
@@ -149,18 +166,60 @@ class TrafficSimulator:
         transport = TcpClient(self.host, self.port) if self.protocol == "TCP" else UdpClient(
             self.host, self.port
         )
-        client_id = self._client_id(number)
-        pacer = WorkerPacer(self.request_rate)
+        base_client_id = self._client_id(number)
+        is_human_mode = self.mode in ("NORMAL", "FLASH_CROWD")
+        pacer = WorkerPacer(self.request_rate, jitter_ratio=0.35 if is_human_mode else 0.0)
+        step = 0
         while pacer.wait(self.stop_event, deadline):
-            success, latency = transport.send_request(client_id)
+            path = self._request_path(number, step, is_human_mode)
+            source_ip, bind_ip = self._resolve_worker_ip(number)
+            if self.ip_mode == "UDP_SPOOF" and self.protocol == "UDP":
+                client_id = f"spoof_udp_{random.randint(1000, 9999)}"
+            else:
+                client_id = base_client_id
+            step += 1
+            success, latency = transport.send_request(
+                client_id,
+                path=path,
+                source_ip=source_ip,
+                bind_ip=bind_ip,
+                ip_mode=self.ip_mode,
+            )
             self.metrics.record(success, latency)
+
+    def _resolve_worker_ip(self, number: int) -> tuple[str | None, str | None]:
+        is_loopback = self.host == "localhost" or self.host.startswith("127.")
+        if self.ip_mode == "SINGLE_IP":
+            return None, None
+        if self.ip_mode == "UDP_SPOOF" and self.protocol == "UDP":
+            octet_3 = random.randint(2, 250)
+            octet_4 = random.randint(1, 254)
+            if is_loopback:
+                ip = f"127.0.{octet_3}.{octet_4}"
+                return ip, ip
+            return f"10.{random.randint(1, 250)}.{octet_3}.{octet_4}", None
+        # MULTI_IP dùng cho cả TCP và UDP: mỗi logical client giữ 1 IP riêng.
+        worker_octet = max(2, min(250, number + 1))
+        if is_loopback:
+            ip = f"127.0.1.{worker_octet}"
+            return ip, ip
+        return f"192.168.100.{worker_octet}", None
 
     def _client_id(self, number: int) -> str:
         if self.mode == "DOS_SIMULATION":
             # Nhiều worker của một simulator dùng chung một nguồn logic.
             return "dos_source_01"
+        if self.mode == "FLASH_CROWD":
+            return f"crowd_user_{number:02d}"
         prefix = "normal_client" if self.mode == "NORMAL" else "ddos_client"
         return f"{prefix}_{number:02d}"
+
+    @staticmethod
+    def _request_path(number: int, step: int, is_human_mode: bool) -> str:
+        if is_human_mode:
+            paths = config.HUMAN_PATHS
+            return paths[(number + step) % len(paths)]
+        return config.ATTACK_TARGET_PATH
 
     def _monitor(self, threads: list[threading.Thread]) -> None:
         if Live is None:
@@ -187,6 +246,7 @@ class TrafficSimulator:
         table.add_column("Value", justify="right")
         table.add_row("Mode", self.mode)
         table.add_row("Protocol", self.protocol)
+        table.add_row("IP source mode", self.ip_mode)
         table.add_row("Server", f"{self.host}:{self.port}")
         table.add_row("Logical clients", str(self.logical_clients))
         table.add_row("Duration", f"{self.duration_seconds} s")

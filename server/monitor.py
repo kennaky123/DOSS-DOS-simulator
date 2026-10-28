@@ -52,6 +52,8 @@ class Dashboard:
         table.add_row("Successful", str(snapshot.successful_requests))
         table.add_row("Failed", str(snapshot.failed_requests))
         table.add_row("Defense status", snapshot.defense_status)
+        table.add_row("Traffic pattern", snapshot.traffic_classification)
+        table.add_row("Trust score", f"{snapshot.trust_score}/100")
         table.add_row("Suspicious requests", str(snapshot.suspicious_requests))
         table.add_row("Blocked requests", str(snapshot.blocked_requests))
         table.add_row("Last block reason", snapshot.last_block_reason)
@@ -71,7 +73,8 @@ class Dashboard:
                 f"connections={item.total_connections} total={item.total_requests} "
                 f"rps={item.requests_per_second} ok={item.successful_requests} "
                 f"failed={item.failed_requests} avg={item.average_response_ms:.2f}ms "
-                f"defense={item.defense_status} suspicious={item.suspicious_requests} "
+                f"defense={item.defense_status} pattern={item.traffic_classification} "
+                f"trust={item.trust_score} suspicious={item.suspicious_requests} "
                 f"blocked={item.blocked_requests} reason={item.last_block_reason} "
                 f"rx={item.bytes_received}B tx={item.bytes_sent}B "
                 f"uptime={item.uptime_seconds:.1f}s"

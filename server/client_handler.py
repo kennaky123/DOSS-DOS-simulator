@@ -14,6 +14,8 @@ from common.protocol import (
     create_response,
     decode_json,
     encode_json,
+    extract_request_path,
+    extract_source_ip,
     receive_tcp_message,
     validate_request,
 )
@@ -60,27 +62,50 @@ def handle_tcp_client(
             connection.settimeout(SOCKET_TIMEOUT_SECONDS)
             message, bytes_received = receive_tcp_message(connection)
             client_id = str(message.get("client_id", "unknown"))
-            statistics.request_received("TCP", client_id, address, bytes_received)
+            effective_ip, ip_mode = extract_source_ip(message, address[0], "TCP")
+            effective_addr = (effective_ip, address[1])
+            statistics.request_received("TCP", client_id, effective_addr, bytes_received)
             request_counted = True
             client_id = validate_request(message)
+            path = extract_request_path(message)
 
-            decision = traffic_guard.check("TCP", client_id, address[0])
+            decision = traffic_guard.check(
+                "TCP", client_id, effective_ip, path=path, ip_mode=ip_mode
+            )
             statistics.defense_observation(
-                suspicious=decision.suspicious, blocked_reason=decision.reason
+                suspicious=decision.suspicious,
+                blocked_reason=decision.reason,
+                traffic_pattern=decision.traffic_pattern,
+                trust_score=decision.trust_score,
             )
             if not decision.allowed:
                 logging.warning(
                     "TCP defense blocked client=%s source=%s reason=%s",
                     client_id,
-                    address[0],
+                    effective_ip,
                     decision.reason,
                 )
                 response_data = encode_json(
                     create_error(decision.reason or "RATE_LIMITED"), tcp_framed=True
                 )
                 response_ok = False
+            elif not traffic_guard.simulate_unprotected_work(
+                decision.overload_delay_seconds
+            ):
+                statistics.server_overloaded()
+                logging.warning(
+                    "TCP server overloaded (defense OFF) client=%s source=%s",
+                    client_id,
+                    effective_ip,
+                )
+                response_data = encode_json(
+                    create_error("SERVER_OVERLOADED"), tcp_framed=True
+                )
+                response_ok = False
             else:
-                response_data = encode_json(create_response(client_id), tcp_framed=True)
+                response_data = encode_json(
+                    create_response(client_id, path=path), tcp_framed=True
+                )
                 response_ok = True
             connection.sendall(response_data)
             bytes_sent = len(response_data)
@@ -93,7 +118,10 @@ def handle_tcp_client(
         if isinstance(exc, ProtocolError):
             decision = traffic_guard.check("TCP", client_id, address[0])
             statistics.defense_observation(
-                suspicious=decision.suspicious, blocked_reason=decision.reason
+                suspicious=decision.suspicious,
+                blocked_reason=decision.reason,
+                traffic_pattern=decision.traffic_pattern,
+                trust_score=decision.trust_score,
             )
     finally:
         elapsed = time.perf_counter() - started_at
@@ -132,23 +160,41 @@ def process_udp_datagram(
     try:
         message = decode_json(data)
         client_id = str(message.get("client_id", "unknown"))
-        statistics.request_received("UDP", client_id, address, len(data))
+        effective_ip, ip_mode = extract_source_ip(message, address[0], "UDP")
+        effective_addr = (effective_ip, address[1])
+        statistics.request_received("UDP", client_id, effective_addr, len(data))
         request_counted = True
         client_id = validate_request(message)
-        decision = traffic_guard.check("UDP", client_id, address[0])
+        path = extract_request_path(message)
+        decision = traffic_guard.check(
+            "UDP", client_id, effective_ip, path=path, ip_mode=ip_mode
+        )
         statistics.defense_observation(
-            suspicious=decision.suspicious, blocked_reason=decision.reason
+            suspicious=decision.suspicious,
+            blocked_reason=decision.reason,
+            traffic_pattern=decision.traffic_pattern,
+            trust_score=decision.trust_score,
         )
         if not decision.allowed:
             logging.warning(
                 "UDP defense blocked client=%s source=%s reason=%s",
                 client_id,
-                address[0],
+                effective_ip,
                 decision.reason,
             )
             response = create_error(decision.reason or "RATE_LIMITED")
+        elif not traffic_guard.simulate_unprotected_work(
+            decision.overload_delay_seconds
+        ):
+            statistics.server_overloaded()
+            logging.warning(
+                "UDP server overloaded (defense OFF) client=%s source=%s",
+                client_id,
+                effective_ip,
+            )
+            response = create_error("SERVER_OVERLOADED")
         else:
-            response = create_response(client_id)
+            response = create_response(client_id, path=path)
             success = True
     except ProtocolError as exc:
         logging.warning("UDP client %s:%d failed: %s", address[0], address[1], exc)
@@ -156,7 +202,10 @@ def process_udp_datagram(
             statistics.request_received("UDP", client_id, address, len(data))
         decision = traffic_guard.check("UDP", client_id, address[0])
         statistics.defense_observation(
-            suspicious=decision.suspicious, blocked_reason=decision.reason
+            suspicious=decision.suspicious,
+            blocked_reason=decision.reason,
+            traffic_pattern=decision.traffic_pattern,
+            trust_score=decision.trust_score,
         )
         response = create_error(decision.reason or "INVALID_REQUEST")
 

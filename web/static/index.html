@@ -67,7 +67,8 @@
         </form>
         <div class="server-foot">
           <span><i class="dot cyan"></i> TCP connections <b id="connections">0</b></span>
-          <span><i class="dot violet"></i> Total requests <b id="totalRequests">0</b></span>
+          <span><i class="dot violet"></i> Active IPs <b id="activeIps">0</b></span>
+          <span><i class="dot cyan"></i> Total requests <b id="totalRequests">0</b></span>
         </div>
       </article>
 
@@ -78,13 +79,20 @@
         </div>
         <form id="simulationForm">
           <div class="triple-row">
-            <label><span>Protocol</span><select name="protocol"><option>TCP</option><option>UDP</option></select></label>
-            <label class="wide"><span>Scenario</span><select name="mode" id="mode"><option>NORMAL</option><option>DOS_SIMULATION</option><option>DDOS_SIMULATION</option></select></label>
+            <label><span>Protocol</span><select name="protocol" id="simProtocol"><option value="TCP">TCP</option><option value="UDP">UDP</option></select></label>
+            <label class="wide"><span>Scenario</span><select name="mode" id="mode"><option value="NORMAL">NORMAL</option><option value="FLASH_CROWD">FLASH_CROWD (Client ồ ạt)</option><option value="DOS_SIMULATION">DOS_SIMULATION</option><option value="DDOS_SIMULATION">DDOS_SIMULATION</option></select></label>
           </div>
           <div class="field-row target-row">
             <label><span>Target</span><input name="host" value="127.0.0.1" autocomplete="off"></label>
             <label><span>Port</span><input name="port" type="number" value="9000" min="1" max="65535"></label>
           </div>
+          <label><span>Chế độ IP nguồn (IP Source Mode)</span>
+            <select name="ip_mode" id="ipMode">
+              <option value="MULTI_IP">MULTI_IP — Đa IP nguồn (Dùng chung TCP &amp; UDP)</option>
+              <option value="UDP_SPOOF" id="udpSpoofOption" disabled>UDP_SPOOF — UDP IP Spoofing (Chỉ mở khi dùng UDP)</option>
+              <option value="SINGLE_IP">SINGLE_IP — 1 IP nguồn duy nhất (DoS)</option>
+            </select>
+          </label>
           <div class="triple-row inputs-3">
             <label><span>Clients</span><input name="clients" type="number" value="2" min="1"></label>
             <label><span>Rate / client</span><input name="rate" type="number" value="1" min="0.1" step="0.1"></label>
@@ -100,22 +108,27 @@
       <article class="panel telemetry-panel">
         <div class="panel-heading">
           <div><p class="index">03 / DEFENSE</p><h2>Threat telemetry</h2></div>
-          <span class="shield-state normal" id="defenseState">NORMAL</span>
+          <div class="defense-actions">
+            <button class="ghost toggle-defense" type="button" id="toggleDefense">Tắt phòng thủ</button>
+            <span class="shield-state normal" id="defenseState">NORMAL</span>
+          </div>
         </div>
         <div class="telemetry-main">
           <div class="gauge-wrap">
             <div class="gauge" id="gauge"><div><strong id="successRate">100</strong><sup>%</sup><span>SUCCESS</span></div></div>
           </div>
           <div class="telemetry-list">
+            <div><span>Traffic pattern</span><b id="trafficPattern">NORMAL</b></div>
+            <div><span>Trust score</span><b id="trustScore">100 / 100</b></div>
             <div><span>Successful</span><b id="successful">0</b></div>
-            <div><span>Failed</span><b id="failed">0</b></div>
+            <div><span>Failed / Overloaded</span><b id="failed">0</b></div>
             <div><span>Suspicious</span><b id="suspicious">0</b></div>
             <div><span>Data received</span><b id="bytesReceived">0 B</b></div>
           </div>
         </div>
         <div class="rule-strip">
           <span><i></i> GLOBAL <b>1000 r/s</b></span>
-          <span><i></i> SOURCE <b>250 r/s</b></span>
+          <span><i></i> SOURCE <b>250 r/s (600 crowd)</b></span>
           <span><i></i> CLIENT <b>40 r/s</b></span>
         </div>
       </article>
@@ -133,6 +146,70 @@
           <span>Average latency <b id="simLatency">0.00 ms</b></span>
         </div>
         <p class="safety-note"><span>LOCKED</span> Public IP, unlimited duration, spoofing và raw packets luôn bị vô hiệu hóa.</p>
+      </article>
+
+      <article class="panel service-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="index">05 / LIVE WEB SERVICE · NETSHOP PORTAL</p>
+            <h2>Trải nghiệm khách hàng thực tế trên cổng dịch vụ</h2>
+          </div>
+          <div class="defense-actions">
+            <button class="ghost toggle-defense" type="button" id="toggleAutoBrowse">Tự động duyệt: TẮT</button>
+            <span class="state-pill online" id="serviceBadge">200 OK · READY</span>
+          </div>
+        </div>
+
+        <div class="browser-bar">
+          <span class="browser-dots"><i></i><i></i><i></i></span>
+          <code class="browser-url" id="serviceUrl">tcp://127.0.0.1:9000/products</code>
+          <span class="browser-latency" id="serviceLatency">0.00 ms</span>
+        </div>
+
+        <div class="service-nav" role="tablist" aria-label="Cổng dịch vụ NetShop">
+          <button type="button" class="service-tab" data-path="/home">Trang chủ (/home)</button>
+          <button type="button" class="service-tab active" data-path="/products">Sản phẩm (/products)</button>
+          <button type="button" class="service-tab" data-path="/search">Tìm kiếm (/search)</button>
+          <button type="button" class="service-tab" data-path="/cart">Giỏ hàng (/cart)</button>
+          <button type="button" class="service-tab" data-path="/checkout">Thanh toán (/checkout)</button>
+          <button type="button" class="service-tab" data-path="/login">Đăng nhập (/login)</button>
+        </div>
+
+        <div class="service-viewport" id="serviceViewport">
+          <div class="service-header-bar">
+            <div>
+              <strong id="servicePageTitle">Danh sách Sản phẩm Flash Sale</strong>
+              <p id="servicePageMessage">Khởi động Test Server rồi bấm vào các mục trên để trải nghiệm tốc độ phản hồi thực tế.</p>
+            </div>
+            <span class="mono" id="serviceOrderBadge">CLIENT: web_visitor_01</span>
+          </div>
+          <div class="product-grid" id="serviceItems">
+            <div class="product-card">
+              <span class="product-tag">HOT</span>
+              <h4>Laptop Pro RTX 4070</h4>
+              <p class="product-price">32.900.000đ</p>
+              <small>Kho: 12 sản phẩm</small>
+            </div>
+            <div class="product-card">
+              <span class="product-tag">SALE -30%</span>
+              <h4>Bàn phím Cơ Custom Aluminum</h4>
+              <p class="product-price">2.490.000đ</p>
+              <small>Kho: 38 sản phẩm</small>
+            </div>
+            <div class="product-card">
+              <span class="product-tag">FLASH</span>
+              <h4>Tai nghe Không dây ANC Studio</h4>
+              <p class="product-price">4.150.000đ</p>
+              <small>Kho: 19 sản phẩm</small>
+            </div>
+            <div class="product-card">
+              <span class="product-tag">NEW</span>
+              <h4>Chuột Gaming Siêu nhẹ 4KHz</h4>
+              <p class="product-price">1.890.000đ</p>
+              <small>Kho: 54 sản phẩm</small>
+            </div>
+          </div>
+        </div>
       </article>
     </section>
   </main>
