@@ -31,6 +31,33 @@ class TcpClient:
         ip_mode: str = "SINGLE_IP",
     ) -> tuple[bool, float]:
         started_at = time.perf_counter()
+
+        # Nếu mục tiêu là Web Bán Hàng E-Commerce (Port 5000), gửi HTTP Request chuẩn
+        if self.port == 5000:
+            http_path = path if path.startswith("/") else f"/{path}"
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
+                    client_socket.settimeout(SOCKET_TIMEOUT_SECONDS)
+                    if bind_ip:
+                        try:
+                            client_socket.bind((bind_ip, 0))
+                        except Exception:
+                            pass
+                    client_socket.connect((self.host, self.port))
+                    http_req = (
+                        f"GET {http_path} HTTP/1.1\r\n"
+                        f"Host: {self.host}:{self.port}\r\n"
+                        f"User-Agent: BotnetSimulator/{client_id}\r\n"
+                        f"X-Forwarded-For: {source_ip or '127.0.0.1'}\r\n"
+                        f"Connection: close\r\n\r\n"
+                    ).encode("utf-8")
+                    client_socket.sendall(http_req)
+                    resp = client_socket.recv(1024)
+                    success = b"200 OK" in resp or b"HTTP/1.1 200" in resp or b"HTTP/1.1 429" in resp
+            except Exception:
+                success = False
+            return success, time.perf_counter() - started_at
+
         # TCP bắt buộc bắt tay 3 bước nên không dùng UDP_SPOOF, chỉ hỗ trợ SINGLE_IP hoặc MULTI_IP.
         effective_mode = "MULTI_IP" if ip_mode == "UDP_SPOOF" else ip_mode
         try:

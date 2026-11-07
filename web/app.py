@@ -50,6 +50,18 @@ class WebController:
             self._defense_enabled = enabled
             if self._server:
                 self._server.set_defense_enabled(enabled)
+            # Đồng bộ trạng thái phòng thủ sang Web Bán Hàng (Port 5000)
+            try:
+                import sys
+                local_shop = Path(__file__).resolve().parent.parent / "real_ecommerce_shop"
+                shop_dir = str(local_shop if local_shop.exists() else Path(__file__).resolve().parents[2] / "real_ecommerce_shop")
+                if shop_dir not in sys.path:
+                    sys.path.insert(0, shop_dir)
+                import shop_server
+                with shop_server.state_lock:
+                    shop_server.defense_enabled = enabled
+            except Exception:
+                pass
 
     def start_server(self, payload: dict[str, Any]) -> None:
         host = validate_lab_address(str(payload.get("host", config.DEFAULT_HOST)))
@@ -348,8 +360,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; "
-            "frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+            "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+            "frame-src 'self' http://127.0.0.1:5000; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
         )
         self.end_headers()
         self.wfile.write(content)
@@ -387,10 +399,25 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     configure_logging()
+
+    # Tự động khởi chạy Web Bán Hàng E-Commerce trên Port 5000 để làm mục tiêu DoS/DDoS
+    try:
+        import sys
+        local_shop = Path(__file__).resolve().parent.parent / "real_ecommerce_shop"
+        shop_dir = str(local_shop if local_shop.exists() else Path(__file__).resolve().parents[2] / "real_ecommerce_shop")
+        if shop_dir not in sys.path:
+            sys.path.insert(0, shop_dir)
+        import shop_server
+        shop_thread = threading.Thread(target=shop_server.run_web_server, name="TechStoreShop", daemon=True)
+        shop_thread.start()
+        print("🛒 Đã khởi chạy Web Bán Hàng TechStore tại: http://127.0.0.1:5000")
+    except Exception as exc:
+        logging.warning("Không thể khởi động Web Bán Hàng: %s", exc)
+
     controller = WebController()
     handler = type("BoundDashboardHandler", (DashboardHandler,), {"controller": controller})
     web_server = ThreadingHTTPServer((args.host, args.port), handler)
-    print(f"Web dashboard: http://{args.host}:{args.port}")
+    print(f"🎛️ Web Dashboard Điều Khiển DoS/DDoS: http://{args.host}:{args.port}")
     print("Nhấn Ctrl+C để dừng web, simulation và test server.")
     try:
         web_server.serve_forever()

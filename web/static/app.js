@@ -264,14 +264,17 @@ function syncIpModeWithProtocol(protocol, notify = false) {
   const ipModeSelect = $('ipMode');
   const spoofOption = $('udpSpoofOption');
   const currentScenario = $('mode').value;
+  
   if (protocol === 'UDP') {
+    spoofOption.removeAttribute('disabled');
     spoofOption.disabled = false;
-    if (currentScenario === 'DDOS_SIMULATION' || currentScenario === 'DOS_SIMULATION') {
-      ipModeSelect.value = 'UDP_SPOOF';
-      if (notify) toast('Đã chuyển sang UDP: Tự động bật chế độ UDP IP Spoofing!');
-    }
+    spoofOption.textContent = 'UDP_SPOOF — UDP IP Spoofing (Đang mở)';
+    ipModeSelect.value = 'UDP_SPOOF';
+    if (notify) toast('Đã chuyển sang UDP: Đã mở và kích hoạt chế độ UDP IP Spoofing!');
   } else {
+    spoofOption.setAttribute('disabled', 'disabled');
     spoofOption.disabled = true;
+    spoofOption.textContent = 'UDP_SPOOF — UDP IP Spoofing (Chỉ mở khi dùng UDP)';
     if (ipModeSelect.value === 'UDP_SPOOF') {
       ipModeSelect.value = currentScenario === 'DOS_SIMULATION' ? 'SINGLE_IP' : 'MULTI_IP';
       if (notify) toast('TCP cần bắt tay 3 bước: Đã chuyển về chế độ Đa IP nguồn (MULTI_IP).');
@@ -294,12 +297,32 @@ serverForm.elements.protocol.addEventListener('change', (event) => {
   }
 });
 
+window.applyAttackPreset = function(type) {
+  if (type === 'DOS') {
+    $('mode').value = 'DOS_SIMULATION';
+    $('ipMode').value = 'SINGLE_IP';
+    simulationForm.elements.clients.value = 25;
+    simulationForm.elements.rate.value = 8;
+    simulationForm.elements.duration.value = 20;
+    simulationForm.elements.port.value = 5000;
+    toast('Đã chọn cấu hình DoS (25 Bots - 8 r/s)! Bấm "Chạy mô phỏng" để xem web lag.');
+  } else if (type === 'DDOS') {
+    $('mode').value = 'DDOS_SIMULATION';
+    $('ipMode').value = 'MULTI_IP';
+    simulationForm.elements.clients.value = 35;
+    simulationForm.elements.rate.value = 10;
+    simulationForm.elements.duration.value = 20;
+    simulationForm.elements.port.value = 5000;
+    toast('Đã chọn cấu hình DDoS cực đại (35 Bots - 10 r/s)! Bấm "Chạy mô phỏng" để xem web lag.');
+  }
+};
+
 $('mode').addEventListener('change', (event) => {
   const presets = {
     NORMAL: [2, 1, 10],
     FLASH_CROWD: [35, 4.5, 15],
-    DOS_SIMULATION: [20, 5, 15],
-    DDOS_SIMULATION: [30, 6, 15]
+    DOS_SIMULATION: [25, 8, 20],
+    DDOS_SIMULATION: [35, 10, 20]
   };
   const modeVal = event.target.value;
   const [clients, rate, duration] = presets[modeVal] || presets.NORMAL;
@@ -317,4 +340,5 @@ $('mode').addEventListener('change', (event) => {
 
 setInterval(() => setText('clock', new Date().toLocaleTimeString('vi-VN', {hour12: false})), 1000);
 setInterval(refresh, 1000);
+syncIpModeWithProtocol($('simProtocol').value, false);
 refresh();

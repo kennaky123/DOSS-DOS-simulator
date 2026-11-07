@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TechStore — Thế Giới Công Nghệ Chính Hãng</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛒</text></svg>">
+</head>
+<body>
+
+  <!-- Thanh Quản Trị Giám Sát Tấn Công & Phòng Thủ WAF -->
+  <aside class="defense-bar" id="defenseBar">
+    <div class="defense-container">
+      <div class="defense-left">
+        <span class="status-indicator" id="defenseDot"></span>
+        <span class="defense-label">PHÒNG THỦ WAF DDoS:</span>
+        <strong id="defenseText">ĐANG TẮT (Dễ bị sập)</strong>
+      </div>
+      <div class="defense-stats">
+        <span>Worker: <b id="workerStats">0 / 8 (0%)</b></span>
+        <span>CPU: <b id="cpuStats" style="color:#f59e0b;">1%</b></span>
+        <span>RAM DoS: <b id="ramStats" style="color:#ec4899;">0 MB</b></span>
+        <span>Tổng Request: <b id="totalReqStats">0</b></span>
+        <span>Bị Chặn: <b id="blockedReqStats" class="text-danger">0</b></span>
+      </div>
+      <div class="defense-action">
+        <button id="toggleDefenseBtn" class="btn-toggle-defense">Bật Phòng Thủ WAF</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Header Chính Của Trang Web Bán Hàng -->
+  <header class="main-header">
+    <div class="header-inner">
+      <a href="/" class="brand-logo">
+        <span class="logo-icon">⚡</span>
+        <div class="logo-text">
+          <span class="logo-title">TechStore</span>
+          <span class="logo-sub">Chính hãng & Uy tín</span>
+        </div>
+      </a>
+
+      <!-- Thanh Tìm Kiếm Sản Phẩm (Truy vấn SQLite) -->
+      <form class="search-box" id="searchForm">
+        <input type="text" id="searchInput" placeholder="Tìm điện thoại, laptop, phụ kiện..." autocomplete="off">
+        <button type="submit" class="btn-search">🔍 Tìm</button>
+      </form>
+
+      <!-- Tài Khoản & Giỏ Hàng -->
+      <div class="header-actions">
+        <!-- Khu vực hiển thị người dùng đăng nhập -->
+        <div id="authSection">
+          <button class="btn-auth" id="openAuthModalBtn">
+            <span class="icon">👤</span>
+            <span>Đăng nhập / Đăng ký</span>
+          </button>
+        </div>
+
+        <!-- Nút Giỏ Hàng -->
+        <button class="btn-cart" id="openCartBtn">
+          <span class="icon">🛒</span>
+          <span class="cart-label">Giỏ hàng</span>
+          <span class="cart-badge" id="cartCount">0</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Banner Khuyến Mãi / Hero -->
+  <section class="hero-banner">
+    <div class="banner-content">
+      <span class="badge-promo">SIÊU SALE CÔNG NGHỆ 2026</span>
+      <h1>Đỉnh Cao Hiệu Năng.<br>Ưu Đãi Lên Đến 40%</h1>
+      <p>Trải nghiệm mua sắm mượt mà, lưu trữ dữ liệu an toàn trên SQLite với bảo mật WAF đa tầng.</p>
+    </div>
+  </section>
+
+  <!-- Danh Mục & Lưới Sản Phẩm -->
+  <main class="store-container">
+    <div class="category-tabs">
+      <button class="tab-btn active" data-cat="all">Tất cả sản phẩm</button>
+      <button class="tab-btn" data-cat="Điện thoại">📱 Điện thoại</button>
+      <button class="tab-btn" data-cat="Laptop">💻 Laptop</button>
+      <button class="tab-btn" data-cat="Phụ kiện">🎧 Phụ kiện</button>
+    </div>
+
+    <div class="products-header">
+      <h2 id="sectionTitle">Tất cả sản phẩm</h2>
+      <span class="product-count" id="productCount">Đang tải từ SQLite...</span>
+    </div>
+
+    <!-- Lưới hiển thị sản phẩm -->
+    <div class="products-grid" id="productsGrid">
+      <!-- Sản phẩm sẽ được nạp bằng JS từ SQLite -->
+    </div>
+  </main>
+
+  <!-- MODAL ĐĂNG NHẬP / ĐĂNG KÝ -->
+  <div class="modal-backdrop" id="authModal">
+    <div class="modal-card">
+      <button class="modal-close" id="closeAuthModalBtn">&times;</button>
+      
+      <div class="modal-tabs">
+        <button class="modal-tab active" id="tabLogin">Đăng nhập</button>
+        <button class="modal-tab" id="tabRegister">Đăng ký mới</button>
+      </div>
+
+      <!-- Form Đăng Nhập -->
+      <form class="auth-form" id="loginForm">
+        <h3>Đăng nhập TechStore</h3>
+        <p class="form-desc">Truy cập tài khoản để thanh toán và nhận ưu đãi riêng.</p>
+        <div class="form-group">
+          <label for="loginUsername">Tên đăng nhập</label>
+          <input type="text" id="loginUsername" required placeholder="Ví dụ: admin">
+        </div>
+        <div class="form-group">
+          <label for="loginPassword">Mật khẩu</label>
+          <input type="password" id="loginPassword" required placeholder="Mật khẩu của bạn">
+        </div>
+        <button type="submit" class="btn-primary-form">Đăng nhập ngay</button>
+        <p class="form-footer-tip">Tài khoản mặc định thử nghiệm: <b>admin</b> / Mật khẩu: <b>admin123</b></p>
+      </form>
+
+      <!-- Form Đăng Ký -->
+      <form class="auth-form" id="registerForm" style="display: none;">
+        <h3>Tạo tài khoản mới</h3>
+        <p class="form-desc">Dữ liệu sẽ được lưu trực tiếp vào cơ sở dữ liệu SQLite.</p>
+        <div class="form-group">
+          <label for="regUsername">Tên đăng nhập</label>
+          <input type="text" id="regUsername" required placeholder="Tên tài khoản (viết liền)">
+        </div>
+        <div class="form-group">
+          <label for="regFullname">Họ và tên</label>
+          <input type="text" id="regFullname" required placeholder="Nguyễn Văn A">
+        </div>
+        <div class="form-group">
+          <label for="regEmail">Email</label>
+          <input type="email" id="regEmail" required placeholder="email@example.com">
+        </div>
+        <div class="form-group">
+          <label for="regPassword">Mật khẩu</label>
+          <input type="password" id="regPassword" required placeholder="Nhập mật khẩu an toàn">
+        </div>
+        <button type="submit" class="btn-primary-form">Đăng ký tài khoản</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- GIỎ HÀNG (DRAWER) -->
+  <div class="cart-drawer-backdrop" id="cartDrawer">
+    <div class="cart-drawer">
+      <div class="cart-header">
+        <h3>Giỏ hàng của bạn (<span id="cartItemCount">0</span>)</h3>
+        <button class="cart-close" id="closeCartBtn">&times;</button>
+      </div>
+      <div class="cart-body" id="cartList">
+        <p class="empty-cart-msg">Giỏ hàng của bạn đang trống.</p>
+      </div>
+      <div class="cart-footer">
+        <div class="cart-total-row">
+          <span>Tổng tiền:</span>
+          <strong id="cartTotalPrice">0 đ</strong>
+        </div>
+        <button class="btn-checkout" id="checkoutBtn">Tiến hành đặt hàng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Widget hiển thị Ping độ trễ thời gian thực -->
+  <div class="realtime-latency" id="latencyWidget">
+    <span class="ping-dot"></span>
+    <span id="latencyText">Ping: 12ms (Mượt)</span>
+  </div>
+
+  <!-- Thông báo Toast -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <footer class="main-footer">
+    <div class="footer-inner">
+      <p>© 2026 TechStore Demo — Đồ Án Mô Phỏng Tấn Công & Phòng Thủ DoS/DDoS Trên Ứng Dụng Web Thật.</p>
+      <p class="text-muted">Cơ sở dữ liệu: SQLite3 | Giao thức: HTTP/1.1 over TCP | Mô hình: Worker Thread Pool.</p>
+    </div>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
