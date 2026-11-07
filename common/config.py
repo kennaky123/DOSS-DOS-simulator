@@ -10,12 +10,12 @@ SIMULATION_MODES = ("NORMAL", "FLASH_CROWD", "DOS_SIMULATION", "DDOS_SIMULATION"
 IP_MODES = ("SINGLE_IP", "MULTI_IP", "UDP_SPOOF")
 
 # Hard limit không thể tăng bằng tham số dòng lệnh.
-MAX_CLIENTS = 50
-MAX_REQUEST_RATE = 20.0  # request / client / giây
-MAX_DURATION = 60
-MAX_SERVER_REQUESTS_PER_SECOND = 1_000
-MAX_SOURCE_REQUESTS_PER_SECOND = 250
-MAX_LOGICAL_CLIENT_REQUESTS_PER_SECOND = 40
+MAX_CLIENTS = 100
+MAX_REQUEST_RATE = 50.0  # request / client / giây
+MAX_DURATION = 300       # tối đa 300 giây (5 phút)
+MAX_SERVER_REQUESTS_PER_SECOND = 2_500
+MAX_SOURCE_REQUESTS_PER_SECOND = 800
+MAX_LOGICAL_CLIENT_REQUESTS_PER_SECOND = 100
 ALERT_SOURCE_REQUESTS_PER_SECOND = 100
 ALERT_LOGICAL_CLIENT_REQUESTS_PER_SECOND = 15
 DEFENSE_ALERT_WINDOW_SECONDS = 5.0
@@ -51,8 +51,8 @@ MODE_DEFAULTS = {
 
 # Giới hạn riêng giúp các profile có mức tải khác nhau và vẫn an toàn.
 MODE_LIMITS = {
-    "NORMAL": {"clients": 5, "rate": 2.0},
-    "FLASH_CROWD": {"clients": 50, "rate": 8.0},
-    "DOS_SIMULATION": {"clients": 30, "rate": 10.0},
-    "DDOS_SIMULATION": {"clients": 50, "rate": 10.0},
+    "NORMAL": {"clients": 10, "rate": 5.0},
+    "FLASH_CROWD": {"clients": 80, "rate": 20.0},
+    "DOS_SIMULATION": {"clients": 80, "rate": 30.0},
+    "DDOS_SIMULATION": {"clients": 100, "rate": 40.0},
 }

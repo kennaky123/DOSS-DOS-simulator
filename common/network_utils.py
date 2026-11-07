@@ -15,9 +15,9 @@ PUBLIC_IP_ERROR = "Project chỉ cho phép localhost hoặc private LAN IP."
 
 
 def is_lab_address(host: str) -> bool:
-    """Chỉ nhận localhost, IPv4 loopback hoặc đúng ba dải RFC1918."""
+    """Chỉ nhận localhost, IPv4 loopback, 0.0.0.0 hoặc đúng ba dải RFC1918."""
     value = host.strip().lower()
-    if value == "localhost":
+    if value in ("localhost", "0.0.0.0"):
         return True
     try:
         address = ipaddress.ip_address(value)

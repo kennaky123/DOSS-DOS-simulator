@@ -31,7 +31,7 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
 # Cấu hình Web Server
-HOST = "127.0.0.1"
+HOST = "0.0.0.0"             # Lắng nghe trên mọi card mạng (cho phép máy khác trong LAN truy cập)
 PORT = 5000
 WORKER_THREADS = 8           # 8 luồng xử lý đồng thời
 RATE_LIMIT_PER_SEC = 10      # Ngưỡng chặn DDoS: tối đa 10 request/giây/IP
