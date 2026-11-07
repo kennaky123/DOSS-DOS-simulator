@@ -383,9 +383,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
         logging.info("web client=%s " + message, self.client_address[0], *args)
 
 
+def get_local_lan_ip() -> str:
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Network Lab Web Dashboard")
-    parser.add_argument("--host", default="127.0.0.1", help="Local/private web bind IP")
+    parser.add_argument("--host", default="0.0.0.0", help="Local/private web bind IP")
     parser.add_argument("--port", type=int, default=8080, help="Web dashboard port")
     args = parser.parse_args()
     try:
@@ -399,6 +409,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     configure_logging()
+    lan_ip = get_local_lan_ip()
 
     # Tự động khởi chạy Web Bán Hàng E-Commerce trên Port 5000 để làm mục tiêu DoS/DDoS
     try:
@@ -410,14 +421,17 @@ def main() -> None:
         import shop_server
         shop_thread = threading.Thread(target=shop_server.run_web_server, name="TechStoreShop", daemon=True)
         shop_thread.start()
-        print("🛒 Đã khởi chạy Web Bán Hàng TechStore tại: http://127.0.0.1:5000")
+        print("=================================================================")
+        print(f"🛒 WEB BÁN HÀNG (Mở trên máy bạn):        http://127.0.0.1:5000")
+        print(f"🌐 LINK GỬI CHO MÁY BẠN BÈ (Cùng Wi-Fi):  http://{lan_ip}:5000")
     except Exception as exc:
         logging.warning("Không thể khởi động Web Bán Hàng: %s", exc)
 
     controller = WebController()
     handler = type("BoundDashboardHandler", (DashboardHandler,), {"controller": controller})
     web_server = ThreadingHTTPServer((args.host, args.port), handler)
-    print(f"🎛️ Web Dashboard Điều Khiển DoS/DDoS: http://{args.host}:{args.port}")
+    print(f"🎛️ WEB ĐIỀU KHIỂN DOS/DDOS (Máy của bạn): http://127.0.0.1:{args.port}")
+    print("=================================================================")
     print("Nhấn Ctrl+C để dừng web, simulation và test server.")
     try:
         web_server.serve_forever()

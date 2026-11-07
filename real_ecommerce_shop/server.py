@@ -50,39 +50,40 @@ sessions: dict[str, dict] = {}  # session_token -> user_data
 ram_stress_buffers: collections.deque[bytearray] = collections.deque(maxlen=400)
 
 
-def apply_dos_workload(current_defense: bool):
-    """Khi tắt phòng thủ WAF: Đốt CPU (băm SHA-256) + Đốt RAM (cấp phát buffer) + Nghẽn Worker Pool."""
+def apply_dos_workload(current_defense: bool, is_bot: bool = False):
+    """Khi tắt phòng thủ WAF và đang có tải tấn công: Đốt CPU + Đốt RAM + Nghẽn Worker Pool."""
     if not current_defense:
-        # 1. ĐỐT CPU (CPU Stress via Cryptographic Hash Workload):
-        # Ép CPU máy tính lên 80% - 100% thấy rõ trên Task Manager của Windows!
-        dummy = b"stress_dos_cpu_" + str(time.monotonic()).encode()
-        for _ in range(45_000):
-            dummy = hashlib.sha256(dummy).digest()
-
-        # 2. ĐỐT RAM (RAM Exhaustion via Socket Buffer Accumulation):
-        # Tích lũy buffer 512KB cho mỗi kết nối DoS để đẩy RAM tiến trình lên
         with state_lock:
-            ram_stress_buffers.append(bytearray(512 * 1024))
             current_active = active_workers
+        # Chỉ gây nghẽn khi có gói tin Bot tấn công hoặc khi nhiều worker đang bận đồng thời
+        if is_bot or current_active >= 3:
+            # 1. ĐỐT CPU (CPU Stress via Cryptographic Hash Workload):
+            dummy = b"stress_dos_cpu_" + str(time.monotonic()).encode()
+            for _ in range(45_000):
+                dummy = hashlib.sha256(dummy).digest()
 
-        # 3. GÂY NGHẼN HÀNG ĐỢI (Queue Latency):
-        time.sleep(0.3 + min(0.9, current_active * 0.1))
+            # 2. ĐỐT RAM (RAM Exhaustion via Socket Buffer Accumulation):
+            with state_lock:
+                ram_stress_buffers.append(bytearray(512 * 1024))
+
+            # 3. GÂY NGHẼN HÀNG ĐỢI (Queue Latency):
+            time.sleep(0.35 + min(0.95, current_active * 0.12))
     else:
         with state_lock:
             if ram_stress_buffers:
                 ram_stress_buffers.clear()
 
 
-def check_rate_limit(client_ip: str) -> bool:
-    """Kiểm tra xem IP có đang gửi request quá tần suất cho phép hay không."""
+def check_rate_limit(identity_key: str, limit_per_sec: float = RATE_LIMIT_PER_SEC) -> bool:
+    """Kiểm tra xem thực thể có đang gửi request quá tần suất cho phép hay không."""
     now = time.monotonic()
-    history = ip_request_history[client_ip]
-    while history and history[0] < now - RATE_WINDOW_SEC:
-        history.popleft()
-    history.append(now)
-    # Tần suất request / giây
-    rps = len(history) / RATE_WINDOW_SEC
-    return rps <= RATE_LIMIT_PER_SEC
+    with state_lock:
+        history = ip_request_history[identity_key]
+        while history and history[0] < now - RATE_WINDOW_SEC:
+            history.popleft()
+        history.append(now)
+        rps = len(history) / RATE_WINDOW_SEC
+    return rps <= limit_per_sec
 
 
 def handle_api_products(conn) -> tuple[int, dict]:
@@ -258,27 +259,8 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
         client_sock.settimeout(5.0)
         client_ip = client_addr[0]
 
-        # Kiểm tra WAF / Phòng thủ nếu đang BẬT
         with state_lock:
             current_defense = defense_enabled
-
-        if current_defense:
-            if not check_rate_limit(client_ip):
-                with state_lock:
-                    blocked_requests += 1
-                resp_body = json.dumps({"error": "TOO_MANY_REQUESTS", "message": "WAF phát hiện tần suất request bất thường (DDoS Protection)!"}).encode("utf-8")
-                response = (
-                    b"HTTP/1.1 429 Too Many Requests\r\n"
-                    b"Content-Type: application/json; charset=utf-8\r\n"
-                    b"Retry-After: 3\r\n"
-                    b"Connection: close\r\n"
-                    + f"Content-Length: {len(resp_body)}\r\n\r\n".encode("utf-8")
-                    + resp_body
-                )
-                client_sock.sendall(response)
-                return
-
-        with state_lock:
             total_requests += 1
 
         # Đọc HTTP Request Header hoặc JSON Request
@@ -296,7 +278,13 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
 
         # Hỗ trợ gói tin JSON từ TrafficSimulator
         if req_data.strip().startswith(b"{"):
-            apply_dos_workload(current_defense)
+            if current_defense and not check_rate_limit(f"bot:{client_ip}", 3.0):
+                with state_lock:
+                    blocked_requests += 1
+                resp_json = json.dumps({"status": "BLOCKED", "reason": "RATE_LIMIT"}).encode("utf-8") + b"\n"
+                client_sock.sendall(resp_json)
+                return
+            apply_dos_workload(current_defense, is_bot=True)
             try:
                 json_msg = json.loads(req_data.decode("utf-8", errors="replace").strip())
                 cid = json_msg.get("client_id", "sim")
@@ -331,12 +319,11 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
         path = url_parsed.path
         query = url_parsed.query
 
-        # Đốt CPU + Đốt RAM + Gây trễ hàng đợi khi bị DoS
-        apply_dos_workload(current_defense)
-
-        # Đọc Content-Length nếu có POST body
+        # Đọc Content-Length, Cookie, User-Agent, X-Forwarded-For
         content_length = 0
         cookie_header = ""
+        user_agent = ""
+        forwarded_for = ""
         for line in lines[1:]:
             if ":" in line:
                 k, v = line.split(":", 1)
@@ -348,6 +335,35 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
                         pass
                 elif k == "cookie":
                     cookie_header = v.strip()
+                elif k == "user-agent":
+                    user_agent = v.strip().lower()
+                elif k == "x-forwarded-for":
+                    forwarded_for = v.strip()
+
+        is_bot = ("botnetsimulator" in user_agent) or ("dos-bot" in user_agent)
+
+        # Kiểm tra WAF / Phòng thủ nếu đang BẬT
+        if current_defense and path != "/api/toggle-defense":
+            rate_key = f"bot:{forwarded_for or client_ip}" if is_bot else f"human:{client_ip}"
+            allowed_rate = 2.0 if is_bot else 60.0
+            if not check_rate_limit(rate_key, allowed_rate):
+                with state_lock:
+                    blocked_requests += 1
+                resp_body = json.dumps({"error": "TOO_MANY_REQUESTS", "message": "WAF phát hiện tần suất request bất thường (DDoS Protection)!"}).encode("utf-8")
+                response = (
+                    b"HTTP/1.1 429 Too Many Requests\r\n"
+                    b"Content-Type: application/json; charset=utf-8\r\n"
+                    b"Retry-After: 3\r\n"
+                    b"Connection: close\r\n"
+                    + f"Content-Length: {len(resp_body)}\r\n\r\n".encode("utf-8")
+                    + resp_body
+                )
+                client_sock.sendall(response)
+                return
+
+        # Đốt CPU + Đốt RAM + Gây trễ hàng đợi khi bị DoS (trừ nút bật/tắt WAF để phản hồi tức thì)
+        if path != "/api/toggle-defense":
+            apply_dos_workload(current_defense, is_bot=is_bot)
 
         # Đọc nốt body nếu chưa đủ
         while len(body_part) < content_length:
