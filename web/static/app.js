@@ -1,14 +1,10 @@
 const $ = (id) => document.getElementById(id);
-const serverForm = $('serverForm');
 const simulationForm = $('simulationForm');
 let toastTimer;
-let autoBrowseTimer = null;
-let autoBrowseStep = 0;
-const SERVICE_PATHS = ['/home', '/products', '/search', '/cart', '/checkout', '/login'];
 
 function formData(form) {
   const data = Object.fromEntries(new FormData(form));
-  for (const key of ['port', 'clients', 'rate', 'duration']) {
+  for (const key of ['port', 'clients', 'rate', 'duration', 'slow_header_interval']) {
     if (key in data) data[key] = Number(data[key]);
   }
   return data;
@@ -33,7 +29,11 @@ function toast(message, error = false) {
   toastTimer = setTimeout(() => node.className = 'toast', 3200);
 }
 
-function setText(id, value) { $(id).textContent = value; }
+function setText(id, value) {
+  const el = $(id);
+  if (el) el.textContent = value;
+}
+
 function bytes(value = 0) {
   if (value < 1024) return `${value} B`;
   if (value < 1048576) return `${(value / 1024).toFixed(1)} KB`;
@@ -43,19 +43,16 @@ function bytes(value = 0) {
 let currentDefenseEnabled = true;
 
 function render(data) {
-  const server = data.server;
+  const server = data.server || {};
   const metrics = server.metrics || {};
-  const simulation = data.simulation;
+  const simulation = data.simulation || {};
   const sim = simulation.metrics || {};
-  const online = server.running;
   currentDefenseEnabled = server.defenseEnabled ?? true;
   const defense = metrics.defense_status || (currentDefenseEnabled ? 'NORMAL' : 'DISABLED');
   const overloaded = defense === 'OVERLOADED';
 
-  $('globalPulse').classList.toggle('online', online || simulation.running);
-  setText('globalStatus', overloaded ? 'SERVER OVERLOADED' : online ? 'SERVER ONLINE' : simulation.running ? 'SIMULATION ACTIVE' : 'SYSTEM IDLE');
-  $('serverState').className = `state-pill${overloaded ? ' overloaded' : online ? ' online' : ''}`;
-  setText('serverState', overloaded ? 'OVERLOADED (SẬP)' : online ? 'ONLINE' : server.error ? 'ERROR' : 'OFFLINE');
+  $('globalPulse').classList.toggle('online', Boolean(simulation.running));
+  setText('globalStatus', overloaded ? 'SERVER OVERLOADED' : simulation.running ? 'SIMULATION ACTIVE' : 'SYSTEM READY');
   $('simulationState').className = `state-pill${simulation.running ? ' running' : ''}`;
   setText('simulationState', simulation.running ? 'RUNNING' : 'READY');
 
@@ -64,9 +61,6 @@ function render(data) {
   setText('blocked', metrics.blocked_requests || 0);
   setText('blockReason', metrics.last_block_reason && metrics.last_block_reason !== '-' ? metrics.last_block_reason : 'no active rule');
   setText('latency', Number(metrics.average_response_ms || 0).toFixed(2));
-  setText('connections', metrics.current_connections || 0);
-  setText('activeIps', metrics.active_ips || 0);
-  setText('totalRequests', metrics.total_requests || 0);
   setText('trafficPattern', metrics.traffic_classification || 'NORMAL');
   setText('trustScore', `${metrics.trust_score ?? 100} / 100`);
   setText('successful', metrics.successful_requests || 0);
@@ -93,11 +87,8 @@ function render(data) {
   const progress = duration ? Math.min(100, Number(sim.elapsed_seconds || 0) / duration * 100) : 0;
   $('progressBar').style.width = `${progress}%`;
 
-  $('startServer').disabled = online;
-  $('stopServer').disabled = !online;
-  $('startSimulation').disabled = simulation.running;
+  $('startSimulation').disabled = Boolean(simulation.running);
   $('stopSimulation').disabled = !simulation.running;
-  if (server.error) toast(server.error, true);
   if (simulation.error) toast(simulation.error, true);
 }
 
@@ -110,15 +101,6 @@ async function refresh() {
   }
 }
 
-serverForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  try { await request('/api/server/start', formData(serverForm)); toast('Test server đã khởi động.'); await refresh(); }
-  catch (error) { toast(error.message, true); }
-});
-$('stopServer').addEventListener('click', async () => {
-  try { await request('/api/server/stop'); toast('Test server đã dừng.'); await refresh(); }
-  catch (error) { toast(error.message, true); }
-});
 simulationForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   try { await request('/api/simulation/start', formData(simulationForm)); toast('Simulation đang chạy.'); await refresh(); }
@@ -132,189 +114,145 @@ $('toggleDefense').addEventListener('click', async () => {
   try {
     const nextState = !currentDefenseEnabled;
     await request('/api/defense/toggle', {enabled: nextState});
-    toast(nextState ? 'Đã BẬT TrafficGuard bảo vệ server.' : 'Đã TẮT TrafficGuard (chế độ dễ bị DoS làm quá tải).');
+    toast(nextState ? 'Đã BẬT phòng thủ bảo vệ server.' : 'Đã TẮT phòng thủ (chế độ dễ bị DoS làm quá tải).');
     await refresh();
   } catch (error) { toast(error.message, true); }
 });
 
-function renderServiceView(service) {
-  const viewport = $('serviceViewport');
-  const badge = $('serviceBadge');
-  const itemsNode = $('serviceItems');
-  viewport.classList.remove('loading');
-
-  $('serviceUrl').textContent = service.target || 'tcp://127.0.0.1:9000/';
-  $('serviceLatency').textContent = `${Number(service.latencyMs || 0).toFixed(2)} ms`;
-
-  if (!service.ok) {
-    viewport.classList.add('crashed');
-    const errCode = service.response?.error || 'SERVICE_UNAVAILABLE';
-    badge.className = 'state-pill overloaded';
-    badge.textContent = `${service.httpStatus || 503} ${errCode}`;
-    $('servicePageTitle').textContent = '503 Service Unavailable — Dịch vụ Web bị tê liệt!';
-    $('servicePageMessage').textContent = ` Phản hồi thất bại sau ${Number(service.latencyMs || 0).toFixed(1)} ms (${errCode}).`;
-    itemsNode.innerHTML = '';
-    const crashBox = document.createElement('div');
-    crashBox.className = 'crash-box';
-    crashBox.style.gridColumn = '1 / -1';
-    const title = document.createElement('strong');
-    title.textContent = `⚠ KHÔNG THỂ TẢI TRANG DỊCH VỤ (${errCode})`;
-    const desc = document.createElement('p');
-    desc.textContent = errCode === 'SERVER_UNREACHABLE'
-      ? 'Test Server chưa khởi động hoặc không thể kết nối. Hãy bấm "Khởi động server" ở mục 01.'
-      : 'Toàn bộ khe xử lý (Worker Slots) của Server đang bị DoS/DDoS chiếm dụng khiến khách hàng thật không thể truy cập! Hãy BẬT PHÒNG THỦ ở mục 03 để khôi phục dịch vụ ngay lập tức.';
-    crashBox.append(title, desc);
-    itemsNode.appendChild(crashBox);
-    return;
-  }
-
-  viewport.classList.remove('crashed');
-  const slow = Number(service.latencyMs || 0) > 80;
-  badge.className = `state-pill ${slow ? 'running' : 'online'}`;
-  badge.textContent = `${service.httpStatus} OK · ${Number(service.latencyMs || 0).toFixed(1)} ms`;
-
-  const payload = service.response?.service || {};
-  $('servicePageTitle').textContent = payload.page || 'NetShop Portal';
-  $('servicePageMessage').textContent = payload.message || 'Phản hồi thành công từ Test Server.';
-  if (payload.order_id) {
-    $('serviceOrderBadge').textContent = `MÃ ĐƠN: ${payload.order_id} (${payload.total})`;
-  } else if (payload.total) {
-    $('serviceOrderBadge').textContent = `TỔNG GIỎ HÀNG: ${payload.total}`;
-  } else {
-    $('serviceOrderBadge').textContent = 'CLIENT: web_visitor_01';
-  }
-
-  const items = payload.items || [];
-  itemsNode.innerHTML = '';
-  if (!items.length) {
-    const card = document.createElement('div');
-    card.className = 'product-card';
-    card.style.gridColumn = '1 / -1';
-    const h4 = document.createElement('h4');
-    h4.textContent = payload.order_id ? `Đơn hàng ${payload.order_id} đã xác nhận` : 'Trạng thái phiên làm việc';
-    const p = document.createElement('p');
-    p.className = 'product-price';
-    p.textContent = payload.total || '200 OK — Xử lý tức thời';
-    const small = document.createElement('small');
-    small.textContent = `Thời gian phản hồi socket: ${Number(service.latencyMs || 0).toFixed(2)} ms`;
-    card.append(h4, p, small);
-    itemsNode.appendChild(card);
-    return;
-  }
-
-  for (const item of items) {
-    const card = document.createElement('div');
-    card.className = 'product-card';
-    const tag = document.createElement('span');
-    tag.className = 'product-tag';
-    tag.textContent = item.tag || 'ITEM';
-    const h4 = document.createElement('h4');
-    h4.textContent = item.name;
-    const price = document.createElement('p');
-    price.className = 'product-price';
-    price.textContent = item.price;
-    const stock = document.createElement('small');
-    stock.textContent = `Kho: ${item.stock} sản phẩm`;
-    card.append(tag, h4, price, stock);
-    itemsNode.appendChild(card);
-  }
-}
-
-async function browseService(path) {
-  for (const btn of document.querySelectorAll('.service-tab')) {
-    btn.classList.toggle('active', btn.dataset.path === path);
-  }
-  $('serviceViewport').classList.add('loading');
-  try {
-    const result = await request('/api/service/request', {
-      path,
-      host: serverForm.elements.host.value,
-      port: Number(serverForm.elements.port.value)
-    });
-    renderServiceView(result.service);
-    render(result.status);
-  } catch (error) {
-    $('serviceViewport').classList.remove('loading');
-    toast(error.message, true);
-  }
-}
-
-for (const btn of document.querySelectorAll('.service-tab')) {
-  btn.addEventListener('click', () => browseService(btn.dataset.path));
-}
-
-$('toggleAutoBrowse').addEventListener('click', () => {
-  if (autoBrowseTimer) {
-    clearInterval(autoBrowseTimer);
-    autoBrowseTimer = null;
-    $('toggleAutoBrowse').textContent = 'Tự động duyệt: TẮT';
-    $('toggleAutoBrowse').classList.remove('enable-defense');
-  } else {
-    $('toggleAutoBrowse').textContent = 'Tự động duyệt: BẬT (1.2s)';
-    $('toggleAutoBrowse').classList.add('enable-defense');
-    browseService(SERVICE_PATHS[autoBrowseStep % SERVICE_PATHS.length]);
-    autoBrowseTimer = setInterval(() => {
-      autoBrowseStep += 1;
-      browseService(SERVICE_PATHS[autoBrowseStep % SERVICE_PATHS.length]);
-    }, 1200);
-  }
-});
-
-function syncIpModeWithProtocol(protocol, notify = false) {
+function syncIpMode(notify = false) {
+  const protocol = $('simProtocol').value;
+  const scenario = $('mode').value;
   const ipModeSelect = $('ipMode');
+  const multiOption = $('multiIpOption');
   const spoofOption = $('udpSpoofOption');
-  const currentScenario = $('mode').value;
-  
+  const singleOption = $('singleIpOption');
+
+  if (protocol === 'SLOW_HEADERS') {
+    $('httpLabOptions').hidden = true;
+    $('slowHeadersOptions').hidden = false;
+    ipModeSelect.value = 'SINGLE_IP';
+    ipModeSelect.disabled = true;
+    multiOption.disabled = true;
+    spoofOption.disabled = true;
+    singleOption.disabled = false;
+    simulationForm.elements.clients.max = 20;
+    $('slowHeadersOptions').hidden = false;
+    if (notify) toast('SLOW_HEADERS chỉ chạy loopback, tối đa 20 kết nối và 30 giây.');
+    return;
+  }
+
+  const isHttpLab = protocol === 'HTTP_GET_SEARCH' || protocol === 'HTTP_POST_LOGIN';
+  $('httpLabOptions').hidden = !isHttpLab;
+  if (isHttpLab) {
+    $('slowHeadersOptions').hidden = true;
+    ipModeSelect.value = 'SINGLE_IP';
+    ipModeSelect.disabled = true;
+    multiOption.disabled = true;
+    spoofOption.disabled = true;
+    singleOption.disabled = false;
+    simulationForm.elements.clients.max = 20;
+    simulationForm.elements.rate.max = 10;
+    simulationForm.elements.duration.max = 30;
+    if (Number(simulationForm.elements.clients.value) > 20) simulationForm.elements.clients.value = 20;
+    if (Number(simulationForm.elements.rate.value) > 10) simulationForm.elements.rate.value = 10;
+    if (Number(simulationForm.elements.duration.value) > 30) simulationForm.elements.duration.value = 30;
+    return;
+  }
+
+  ipModeSelect.disabled = false;
+  $('slowHeadersOptions').hidden = true;
+  simulationForm.elements.rate.max = 50;
+  simulationForm.elements.duration.max = 300;
+  simulationForm.elements.clients.max = 100;
+
+  if (scenario === 'DOS_SIMULATION') {
+    multiOption.disabled = true;
+    multiOption.textContent = 'MULTI_IP — Đa IP nguồn (Khóa ở chế độ DoS)';
+    spoofOption.disabled = true;
+    spoofOption.textContent = 'UDP_SPOOF — UDP IP Spoofing (Khóa ở chế độ DoS)';
+    singleOption.disabled = false;
+    singleOption.textContent = 'SINGLE_IP — 1 IP nguồn duy nhất (DoS)';
+    ipModeSelect.value = 'SINGLE_IP';
+    if (notify) toast('Chế độ DoS: Khóa MULTI_IP và UDP_SPOOF, chỉ dùng 1 IP nguồn duy nhất (SINGLE_IP).');
+    return;
+  }
+
+  multiOption.disabled = false;
+  multiOption.textContent = 'MULTI_IP — Đa IP nguồn (Dùng chung TCP & UDP)';
+
+  if (scenario === 'DDOS_SIMULATION') {
+    singleOption.disabled = true;
+    singleOption.textContent = 'SINGLE_IP — 1 IP nguồn duy nhất (Khóa ở chế độ DDoS)';
+  } else {
+    singleOption.disabled = false;
+    singleOption.textContent = 'SINGLE_IP — 1 IP nguồn duy nhất (DoS)';
+  }
+
   if (protocol === 'UDP') {
-    spoofOption.removeAttribute('disabled');
     spoofOption.disabled = false;
     spoofOption.textContent = 'UDP_SPOOF — UDP IP Spoofing (Đang mở)';
-    ipModeSelect.value = 'UDP_SPOOF';
-    if (notify) toast('Đã chuyển sang UDP: Đã mở và kích hoạt chế độ UDP IP Spoofing!');
+    if (scenario === 'DDOS_SIMULATION' || ipModeSelect.value === 'SINGLE_IP') {
+      ipModeSelect.value = 'UDP_SPOOF';
+    }
+    if (notify) toast('Đã chuyển sang UDP: Đã mở chế độ UDP IP Spoofing!');
   } else {
-    spoofOption.setAttribute('disabled', 'disabled');
     spoofOption.disabled = true;
     spoofOption.textContent = 'UDP_SPOOF — UDP IP Spoofing (Chỉ mở khi dùng UDP)';
-    if (ipModeSelect.value === 'UDP_SPOOF') {
-      ipModeSelect.value = currentScenario === 'DOS_SIMULATION' ? 'SINGLE_IP' : 'MULTI_IP';
+    if (ipModeSelect.value === 'UDP_SPOOF' || (scenario === 'DDOS_SIMULATION' && ipModeSelect.value === 'SINGLE_IP')) {
+      ipModeSelect.value = 'MULTI_IP';
       if (notify) toast('TCP cần bắt tay 3 bước: Đã chuyển về chế độ Đa IP nguồn (MULTI_IP).');
     }
   }
 }
 
-$('simProtocol').addEventListener('change', (event) => {
-  syncIpModeWithProtocol(event.target.value, true);
-});
-
-serverForm.elements.protocol.addEventListener('change', (event) => {
-  const srvProto = event.target.value;
-  if (srvProto === 'UDP') {
-    $('simProtocol').value = 'UDP';
-    syncIpModeWithProtocol('UDP', true);
-  } else if (srvProto === 'TCP') {
-    $('simProtocol').value = 'TCP';
-    syncIpModeWithProtocol('TCP', true);
-  }
+$('simProtocol').addEventListener('change', () => {
+  syncIpMode(true);
 });
 
 window.applyAttackPreset = function(type) {
   if (type === 'DOS') {
     $('mode').value = 'DOS_SIMULATION';
-    $('ipMode').value = 'SINGLE_IP';
     simulationForm.elements.clients.value = 25;
     simulationForm.elements.rate.value = 8;
     simulationForm.elements.duration.value = 20;
     simulationForm.elements.port.value = 5000;
-    toast('Đã chọn cấu hình DoS (25 Bots - 8 r/s)! Bấm "Chạy mô phỏng" để xem web lag.');
+    syncIpMode(false);
+    toast('Đã chọn cấu hình DoS (1 IP · 25 Luồng · 8 r/s)! Bấm "Chạy mô phỏng" để xem web lag.');
   } else if (type === 'DDOS') {
     $('mode').value = 'DDOS_SIMULATION';
-    $('ipMode').value = 'MULTI_IP';
     simulationForm.elements.clients.value = 35;
     simulationForm.elements.rate.value = 10;
     simulationForm.elements.duration.value = 20;
     simulationForm.elements.port.value = 5000;
-    toast('Đã chọn cấu hình DDoS cực đại (35 Bots - 10 r/s)! Bấm "Chạy mô phỏng" để xem web lag.');
+    syncIpMode(false);
+    if ($('simProtocol').value === 'TCP') $('ipMode').value = 'MULTI_IP';
+    toast('Đã chọn cấu hình DDoS cực đại (35 Bots · 10 r/s)! Bấm "Chạy mô phỏng" để xem web lag.');
   }
+};
+
+window.runSlowHeadersEcommerce = function() {
+  $('simProtocol').value = 'SLOW_HEADERS';
+  $('mode').value = 'NORMAL';
+  simulationForm.elements.host.value = '127.0.0.1';
+  simulationForm.elements.port.value = 5000;
+  simulationForm.elements.clients.value = 2;
+  simulationForm.elements.rate.value = 1;
+  simulationForm.elements.duration.value = 20;
+  simulationForm.elements.slow_header_interval.value = 5;
+  syncIpMode(false);
+  toast('Đã chọn SLOW_HEADERS cho Web E-commerce. Kiểm tra tham số rồi nhấn “Chạy mô phỏng”.');
+};
+
+window.selectHttpLabScenario = function(protocol) {
+  $('simProtocol').value = protocol;
+  $('mode').value = 'NORMAL';
+  simulationForm.elements.host.value = '127.0.0.1';
+  simulationForm.elements.port.value = 5000;
+  simulationForm.elements.clients.value = 4;
+  simulationForm.elements.rate.value = 2;
+  simulationForm.elements.duration.value = 15;
+  syncIpMode(false);
+  toast(`${protocol === 'HTTP_GET_SEARCH' ? 'Database Search GET' : 'HTTP POST Login'} đã sẵn sàng. Nhấn “Chạy mô phỏng” để bắt đầu.`);
 };
 
 $('mode').addEventListener('change', (event) => {
@@ -329,16 +267,13 @@ $('mode').addEventListener('change', (event) => {
   simulationForm.elements.clients.value = clients;
   simulationForm.elements.rate.value = rate;
   simulationForm.elements.duration.value = duration;
-  if (modeVal === 'DOS_SIMULATION' && $('simProtocol').value === 'TCP') {
-    $('ipMode').value = 'SINGLE_IP';
-  } else if ($('simProtocol').value === 'UDP' && (modeVal === 'DDOS_SIMULATION' || modeVal === 'DOS_SIMULATION')) {
-    $('ipMode').value = 'UDP_SPOOF';
-  } else {
+  syncIpMode(modeVal === 'DOS_SIMULATION');
+  if (modeVal !== 'DOS_SIMULATION' && $('simProtocol').value === 'TCP') {
     $('ipMode').value = 'MULTI_IP';
   }
 });
 
 setInterval(() => setText('clock', new Date().toLocaleTimeString('vi-VN', {hour12: false})), 1000);
 setInterval(refresh, 1000);
-syncIpModeWithProtocol($('simProtocol').value, false);
+syncIpMode(false);
 refresh();

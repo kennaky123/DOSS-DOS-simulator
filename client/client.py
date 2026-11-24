@@ -19,8 +19,8 @@ from common.network_utils import validate_lab_address, validate_port
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="TCP/UDP Client Simulator cho private lab")
-    parser.add_argument("--host", help="IP Test Server")
-    parser.add_argument("--port", type=int, help="Port Test Server")
+    parser.add_argument("--host", help="IP mục tiêu")
+    parser.add_argument("--port", type=int, help="Port mục tiêu")
     parser.add_argument("--protocol", choices=config.SUPPORTED_PROTOCOLS)
     parser.add_argument("--mode", choices=config.SIMULATION_MODES)
     parser.add_argument("--ip-mode", choices=config.IP_MODES, help="Chế độ IP nguồn (SINGLE_IP, MULTI_IP, UDP_SPOOF)")
@@ -78,8 +78,18 @@ def complete_and_validate(
         parser.error(str(exc))
 
     mode_limits = config.MODE_LIMITS[args.mode]
-    max_clients = min(config.MAX_CLIENTS, mode_limits["clients"])
-    max_rate = min(config.MAX_REQUEST_RATE, mode_limits["rate"])
+    max_clients = (
+        config.MAX_SLOW_HEADER_CLIENTS
+        if args.protocol == "SLOW_HEADERS"
+        else config.MAX_HTTP_LAB_CLIENTS
+        if args.protocol in ("HTTP_GET_SEARCH", "HTTP_POST_LOGIN")
+        else min(config.MAX_CLIENTS, mode_limits["clients"])
+    )
+    max_rate = (
+        config.MAX_HTTP_LAB_RATE
+        if args.protocol in ("HTTP_GET_SEARCH", "HTTP_POST_LOGIN")
+        else min(config.MAX_REQUEST_RATE, mode_limits["rate"])
+    )
     if not 1 <= args.clients <= max_clients:
         parser.error(f"Mode {args.mode} chỉ cho phép 1..{max_clients} logical clients.")
     if not 0 < args.rate <= max_rate:

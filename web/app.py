@@ -8,7 +8,6 @@ import logging
 import mimetypes
 import socket
 import threading
-import time
 from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,25 +18,26 @@ from urllib.parse import urlsplit
 from client.simulator import TrafficSimulator
 from common import config
 from common.network_utils import is_lab_address, validate_lab_address, validate_port
-from common.protocol import (
-    ProtocolError,
-    create_request,
-    decode_json,
-    encode_json,
-    extract_request_path,
-    receive_tcp_message,
-)
-from server.server import TestServer, configure_logging
 
 WEB_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = WEB_ROOT.parent
 STATIC_ROOT = WEB_ROOT / "static"
 MAX_BODY_BYTES = 8_192
+
+
+def configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(threadName)s | %(message)s",
+        handlers=[
+            logging.FileHandler(PROJECT_ROOT / config.LOG_FILE, encoding="utf-8")
+        ],
+    )
 
 
 class WebController:
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._server: TestServer | None = None
         self._defense_enabled: bool = True
         self._simulator: TrafficSimulator | None = None
         self._simulation_thread: threading.Thread | None = None
@@ -48,8 +48,6 @@ class WebController:
         enabled = bool(payload.get("enabled", not self._defense_enabled))
         with self._lock:
             self._defense_enabled = enabled
-            if self._server:
-                self._server.set_defense_enabled(enabled)
             # Đồng bộ trạng thái phòng thủ sang Web Bán Hàng (Port 5000)
             try:
                 import sys
@@ -60,33 +58,10 @@ class WebController:
                 import shop_server
                 with shop_server.state_lock:
                     shop_server.defense_enabled = enabled
+                    shop_server.login_failure_tracker.clear()
+                    shop_server.search_query_cache.clear()
             except Exception:
                 pass
-
-    def start_server(self, payload: dict[str, Any]) -> None:
-        host = validate_lab_address(str(payload.get("host", config.DEFAULT_HOST)))
-        port = validate_port(self._as_int(payload.get("port", config.DEFAULT_PORT), "Port"))
-        protocol = str(payload.get("protocol", "BOTH")).upper()
-        if protocol not in config.SERVER_PROTOCOLS:
-            raise ValueError("Protocol server không hợp lệ.")
-
-        with self._lock:
-            if self._server and self._server.running:
-                raise ValueError("Server đang chạy. Hãy dừng server trước khi đổi cấu hình.")
-            if "defenseEnabled" in payload:
-                self._defense_enabled = bool(payload["defenseEnabled"])
-            server = TestServer(
-                host, port, protocol, defense_enabled=self._defense_enabled
-            )
-            server.start()
-            self._server = server
-
-    def stop_server(self) -> None:
-        with self._lock:
-            server = self._server
-        if server:
-            server.shutdown()
-            server.join()
 
     def start_simulation(self, payload: dict[str, Any]) -> None:
         host = validate_lab_address(str(payload.get("host", config.DEFAULT_HOST)))
@@ -106,21 +81,64 @@ class WebController:
         clients = self._as_int(payload.get("clients", defaults["clients"]), "Clients")
         rate = self._as_float(payload.get("rate", defaults["rate"]), "Rate")
         duration = self._as_int(payload.get("duration", defaults["duration"]), "Duration")
+        slow_header_interval = self._as_float(
+            payload.get("slow_header_interval", 5), "Slow-header interval"
+        )
         limits = config.MODE_LIMITS[mode]
-        max_clients = min(config.MAX_CLIENTS, limits["clients"])
-        max_rate = min(config.MAX_REQUEST_RATE, limits["rate"])
+        max_clients = (
+            config.MAX_SLOW_HEADER_CLIENTS
+            if protocol == "SLOW_HEADERS"
+            else config.MAX_HTTP_LAB_CLIENTS
+            if protocol in ("HTTP_GET_SEARCH", "HTTP_POST_LOGIN")
+            else min(config.MAX_CLIENTS, limits["clients"])
+        )
+        max_rate = (
+            config.MAX_HTTP_LAB_RATE
+            if protocol in ("HTTP_GET_SEARCH", "HTTP_POST_LOGIN")
+            else min(config.MAX_REQUEST_RATE, limits["rate"])
+        )
         if not 1 <= clients <= max_clients:
             raise ValueError(f"Mode {mode} chỉ cho phép 1..{max_clients} clients.")
         if not 0 < rate <= max_rate:
             raise ValueError(f"Mode {mode} chỉ cho phép rate tối đa {max_rate:g}.")
         if not 1 <= duration <= config.MAX_DURATION:
             raise ValueError(f"Duration phải từ 1 đến {config.MAX_DURATION} giây.")
+        if protocol == "SLOW_HEADERS":
+            if host not in ("localhost", "127.0.0.1") and not host.startswith("127."):
+                raise ValueError("SLOW_HEADERS chỉ được phép chạy trên loopback.")
+            if clients > config.MAX_SLOW_HEADER_CLIENTS:
+                raise ValueError(
+                    f"SLOW_HEADERS chỉ cho phép tối đa {config.MAX_SLOW_HEADER_CLIENTS} kết nối."
+                )
+            if duration > config.MAX_SLOW_HEADER_DURATION:
+                raise ValueError(
+                    f"SLOW_HEADERS chỉ cho phép tối đa {config.MAX_SLOW_HEADER_DURATION} giây."
+                )
+            if not config.MIN_SLOW_HEADER_INTERVAL <= slow_header_interval <= config.MAX_SLOW_HEADER_INTERVAL:
+                raise ValueError(
+                    f"Khoảng cách header phải từ {config.MIN_SLOW_HEADER_INTERVAL} đến {config.MAX_SLOW_HEADER_INTERVAL} giây."
+                )
+            ip_mode = "SINGLE_IP"
+        if protocol in ("HTTP_GET_SEARCH", "HTTP_POST_LOGIN"):
+            if host not in ("localhost", "127.0.0.1") and not host.startswith("127."):
+                raise ValueError("HTTP lab scenarios chỉ được phép chạy trên loopback.")
+            if duration > config.MAX_HTTP_LAB_DURATION:
+                raise ValueError(f"HTTP lab chỉ cho phép tối đa {config.MAX_HTTP_LAB_DURATION} giây.")
+            ip_mode = "SINGLE_IP"
 
         with self._lock:
             if self._simulation_thread and self._simulation_thread.is_alive():
                 raise ValueError("Một simulation khác đang chạy.")
             simulator = TrafficSimulator(
-                host, port, protocol, mode, clients, rate, duration, ip_mode=ip_mode
+                host,
+                port,
+                protocol,
+                mode,
+                clients,
+                rate,
+                duration,
+                ip_mode=ip_mode,
+                slow_header_interval_seconds=slow_header_interval,
             )
             self._simulator = simulator
             self._simulation_config = {
@@ -132,6 +150,7 @@ class WebController:
                 "clients": clients,
                 "rate": rate,
                 "duration": duration,
+                "slow_header_interval": slow_header_interval,
             }
             self._simulation_error = None
             self._simulation_thread = threading.Thread(
@@ -159,67 +178,8 @@ class WebController:
         if thread:
             thread.join(config.SOCKET_TIMEOUT_SECONDS + 1.0)
 
-    def call_service(self, payload: dict[str, Any]) -> dict[str, Any]:
-        path = extract_request_path(payload)
-        client_id = str(payload.get("client_id", "web_visitor_01")).strip() or "web_visitor_01"
-        with self._lock:
-            server = self._server
-        host = validate_lab_address(
-            str(payload.get("host") or (server.host if server else config.DEFAULT_HOST))
-        )
-        port = validate_port(
-            self._as_int(
-                payload.get("port") or (server.port if server else config.DEFAULT_PORT),
-                "Port",
-            )
-        )
-        server_proto = server.protocol if server and server.running else "TCP"
-        transport = "UDP" if server_proto == "UDP" else "TCP"
-
-        started_at = time.perf_counter()
-        try:
-            if transport == "TCP":
-                frame = encode_json(create_request(client_id, path=path), tcp_framed=True)
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                    sock.settimeout(config.SOCKET_TIMEOUT_SECONDS)
-                    sock.connect((host, port))
-                    sock.sendall(frame)
-                    response, _ = receive_tcp_message(sock)
-            else:
-                datagram = encode_json(create_request(client_id, path=path), tcp_framed=False)
-                target_addr = (socket.gethostbyname(host), port)
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                    sock.settimeout(config.SOCKET_TIMEOUT_SECONDS)
-                    sock.sendto(datagram, target_addr)
-                    raw, _ = sock.recvfrom(config.MAX_MESSAGE_BYTES)
-                response = decode_json(raw)
-        except (OSError, ProtocolError):
-            latency_ms = round((time.perf_counter() - started_at) * 1_000, 2)
-            return {
-                "ok": False,
-                "httpStatus": 503,
-                "latencyMs": latency_ms,
-                "protocol": transport,
-                "target": f"{transport.lower()}://{host}:{port}{path}",
-                "response": {"status": "ERROR", "error": "SERVER_UNREACHABLE"},
-            }
-
-        latency_ms = round((time.perf_counter() - started_at) * 1_000, 2)
-        ok = response.get("status") == "OK"
-        err = response.get("error", "")
-        http_status = 200 if ok else (503 if err in ("SERVER_OVERLOADED", "SERVER_BUSY") else 429)
-        return {
-            "ok": ok,
-            "httpStatus": http_status,
-            "latencyMs": latency_ms,
-            "protocol": transport,
-            "target": f"{transport.lower()}://{host}:{port}{path}",
-            "response": response,
-        }
-
     def status(self) -> dict[str, Any]:
         with self._lock:
-            server = self._server
             simulator = self._simulator
             simulation_thread = self._simulation_thread
             simulation_config = self._simulation_config
@@ -234,16 +194,6 @@ class WebController:
             "error": None,
             "metrics": None,
         }
-        if server:
-            server_data.update(
-                running=server.running,
-                host=server.host,
-                port=server.port,
-                protocol=server.protocol,
-                defenseEnabled=server.traffic_guard.enabled,
-                error=server.error_message,
-                metrics=asdict(server.statistics.snapshot()),
-            )
 
         simulation_data: dict[str, Any] = {
             "running": bool(simulation_thread and simulation_thread.is_alive()),
@@ -265,7 +215,6 @@ class WebController:
 
     def shutdown(self) -> None:
         self.stop_simulation()
-        self.stop_server()
 
     @staticmethod
     def _as_int(value: Any, label: str) -> int:
@@ -309,15 +258,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         try:
             payload = self._read_json()
-            if path == "/api/service/request":
-                service_result = self.controller.call_service(payload)
-                self._send_json(
-                    {"ok": True, "service": service_result, "status": self.controller.status()}
-                )
-                return
             actions = {
-                "/api/server/start": lambda: self.controller.start_server(payload),
-                "/api/server/stop": self.controller.stop_server,
                 "/api/defense/toggle": lambda: self.controller.set_defense(payload),
                 "/api/simulation/start": lambda: self.controller.start_simulation(payload),
                 "/api/simulation/stop": self.controller.stop_simulation,
@@ -432,7 +373,7 @@ def main() -> None:
     web_server = ThreadingHTTPServer((args.host, args.port), handler)
     print(f"🎛️ WEB ĐIỀU KHIỂN DOS/DDOS (Máy của bạn): http://127.0.0.1:{args.port}")
     print("=================================================================")
-    print("Nhấn Ctrl+C để dừng web, simulation và test server.")
+    print("Nhấn Ctrl+C để dừng web và simulation.")
     try:
         web_server.serve_forever()
     except KeyboardInterrupt:

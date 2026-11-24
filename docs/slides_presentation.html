@@ -1,0 +1,1912 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bảo Vệ Đồ Án Lập Trình Mạng — Hệ Thống Mô Phỏng & Phòng Thủ DoS/DDoS (TCP/UDP)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --bg-canvas: #060A12;
+            --bg-surface: #0D1526;
+            --bg-elevated: #131F38;
+            --bg-glass: rgba(13, 21, 38, 0.82);
+            --text-primary: #F8FAFC;
+            --text-secondary: #94A3B8;
+            --text-muted: #64748B;
+            --accent-cyan: #06B6D4;
+            --accent-blue: #3B82F6;
+            --accent-emerald: #10B981;
+            --accent-amber: #F59E0B;
+            --accent-rose: #F43F5E;
+            --accent-purple: #8B5CF6;
+            --border-subtle: rgba(148, 163, 184, 0.14);
+            --border-bright: rgba(6, 182, 212, 0.4);
+            --font-heading: 'Space Grotesk', 'Inter', sans-serif;
+            --font-body: 'Inter', system-ui, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: var(--bg-canvas);
+            background-image:
+                radial-gradient(circle at 12% 18%, rgba(6, 182, 212, 0.10), transparent 32%),
+                radial-gradient(circle at 88% 82%, rgba(244, 63, 94, 0.08), transparent 32%),
+                linear-gradient(rgba(148, 163, 184, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(148, 163, 184, 0.03) 1px, transparent 1px);
+            background-size: 100% 100%, 100% 100%, 36px 36px, 36px 36px;
+            color: var(--text-primary);
+            font-family: var(--font-body);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            user-select: none;
+        }
+
+        /* Top Progress Bar */
+        .progress-track {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.06);
+            z-index: 2000;
+        }
+
+        .progress-fill {
+            height: 100%;
+            width: 7.14%;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue), var(--accent-emerald));
+            transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+            box-shadow: 0 0 12px rgba(6, 182, 212, 0.7);
+        }
+
+        /* Top Header Bar */
+        .deck-topbar {
+            position: fixed;
+            top: 4px;
+            left: 0;
+            right: 0;
+            height: 46px;
+            padding: 0 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            z-index: 1500;
+            background: rgba(6, 10, 18, 0.75);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 12px;
+        }
+
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .brand-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 10px;
+            border-radius: 999px;
+            background: rgba(6, 182, 212, 0.12);
+            border: 1px solid rgba(6, 182, 212, 0.35);
+            color: var(--accent-cyan);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .slide-jump-select {
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 6px;
+            padding: 4px 10px;
+            font-family: var(--font-body);
+            font-size: 12px;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .slide-jump-select:hover {
+            border-color: var(--accent-cyan);
+        }
+
+        /* Slide Deck Container */
+        .slide-deck {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            padding-top: 50px;
+            padding-bottom: 58px;
+            overflow: hidden;
+        }
+
+        .slide {
+            position: absolute;
+            top: 50px;
+            bottom: 58px;
+            left: 0;
+            right: 0;
+            padding: 24px 48px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(12px) scale(0.992);
+            transition: opacity 0.38s ease, transform 0.38s ease, visibility 0.38s;
+            overflow-y: auto;
+        }
+
+        .slide.active {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0) scale(1);
+            z-index: 10;
+        }
+
+        .slide-inner {
+            width: 100%;
+            max-width: 1420px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            height: 100%;
+            justify-content: center;
+        }
+
+        /* Section Eyebrow & Headers */
+        .slide-header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 16px;
+            border-bottom: 1px solid var(--border-subtle);
+            padding-bottom: 12px;
+            flex-shrink: 0;
+        }
+
+        .eyebrow {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--accent-cyan);
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .slide-h2 {
+            font-family: var(--font-heading);
+            font-size: clamp(22px, 2.3vw, 32px);
+            font-weight: 700;
+            line-height: 1.18;
+            color: var(--text-primary);
+        }
+
+        .header-badge {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            padding: 5px 12px;
+            border-radius: 6px;
+            background: rgba(59, 130, 246, 0.12);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            color: #93C5FD;
+            white-space: nowrap;
+        }
+
+        /* Grid Helpers */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 18px;
+        }
+
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+        }
+
+        .grid-12 {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 18px;
+        }
+
+        .col-4 { grid-column: span 4; }
+        .col-5 { grid-column: span 5; }
+        .col-6 { grid-column: span 6; }
+        .col-7 { grid-column: span 7; }
+        .col-8 { grid-column: span 8; }
+
+        /* Cards */
+        .card {
+            background: var(--bg-glass);
+            border: 1px solid var(--border-subtle);
+            border-radius: 14px;
+            padding: 18px 20px;
+            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--card-accent, var(--accent-cyan));
+            opacity: 0.85;
+        }
+
+        .card-emerald { --card-accent: var(--accent-emerald); }
+        .card-rose { --card-accent: var(--accent-rose); }
+        .card-amber { --card-accent: var(--accent-amber); }
+        .card-purple { --card-accent: var(--accent-purple); }
+        .card-blue { --card-accent: var(--accent-blue); }
+
+        .card-title {
+            font-family: var(--font-heading);
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .card-body {
+            font-size: 13.5px;
+            line-height: 1.55;
+            color: var(--text-secondary);
+        }
+
+        /* Lists */
+        .clean-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            font-size: 13.5px;
+            line-height: 1.5;
+            color: var(--text-secondary);
+        }
+
+        .clean-list li {
+            position: relative;
+            padding-left: 18px;
+        }
+
+        .clean-list li::before {
+            content: '▸';
+            position: absolute;
+            left: 0;
+            color: var(--accent-cyan);
+            font-weight: bold;
+        }
+
+        .clean-list li strong {
+            color: var(--text-primary);
+        }
+
+        /* Badges & Code */
+        code, .mono {
+            font-family: var(--font-mono);
+            font-size: 0.9em;
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            padding: 1px 6px;
+            border-radius: 4px;
+            color: #38BDF8;
+        }
+
+        pre.code-block {
+            background: #050811;
+            border: 1px solid rgba(56, 189, 248, 0.22);
+            border-radius: 10px;
+            padding: 12px 14px;
+            font-family: var(--font-mono);
+            font-size: 11.8px;
+            line-height: 1.48;
+            color: #E2E8F0;
+            overflow-x: auto;
+            user-select: text;
+        }
+
+        .kw { color: #C084FC; font-weight: 600; }
+        .fn { color: #38BDF8; }
+        .str { color: #34D399; }
+        .cm { color: #64748B; font-style: italic; }
+        .num { color: #FBBF24; }
+
+        /* Tables */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12.5px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .data-table th {
+            background: rgba(19, 31, 56, 0.95);
+            color: var(--text-primary);
+            font-weight: 600;
+            text-align: left;
+            padding: 9px 12px;
+            border-bottom: 2px solid rgba(6, 182, 212, 0.35);
+            font-family: var(--font-heading);
+        }
+
+        .data-table td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+        }
+
+        .data-table tr:hover td {
+            background: rgba(255, 255, 255, 0.025);
+        }
+
+        .status-pill {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .pill-ok { background: rgba(16, 185, 129, 0.15); color: #34D399; border: 1px solid rgba(16, 185, 129, 0.35); }
+        .pill-warn { background: rgba(245, 158, 11, 0.15); color: #FBBF24; border: 1px solid rgba(245, 158, 11, 0.35); }
+        .pill-danger { background: rgba(244, 63, 94, 0.15); color: #FB7185; border: 1px solid rgba(244, 63, 94, 0.35); }
+        .pill-info { background: rgba(6, 182, 212, 0.15); color: #22D3EE; border: 1px solid rgba(6, 182, 212, 0.35); }
+
+        /* Big Metrics */
+        .metric-box {
+            background: rgba(13, 21, 38, 0.9);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 14px 16px;
+            text-align: center;
+        }
+
+        .metric-val {
+            font-family: var(--font-heading);
+            font-size: clamp(24px, 2.5vw, 36px);
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.1;
+            margin-bottom: 4px;
+        }
+
+        .metric-lbl {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        /* Interactive Tabs inside Slides */
+        .tab-bar {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .tab-btn {
+            background: var(--bg-surface);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            padding: 6px 13px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .tab-btn.active, .tab-btn:hover {
+            background: rgba(6, 182, 212, 0.16);
+            color: var(--text-primary);
+            border-color: var(--accent-cyan);
+        }
+
+        /* Image Figure Viewer */
+        .fig-frame {
+            background: #080E1C;
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .fig-frame img {
+            max-width: 100%;
+            max-height: 360px;
+            object-fit: contain;
+            border-radius: 6px;
+            cursor: zoom-in;
+            transition: transform 0.2s;
+        }
+
+        .fig-caption {
+            font-size: 11.5px;
+            color: var(--text-secondary);
+            margin-top: 6px;
+            text-align: center;
+        }
+
+        /* Lightbox Modal */
+        .lightbox {
+            position: fixed;
+            inset: 0;
+            background: rgba(3, 6, 12, 0.92);
+            backdrop-filter: blur(8px);
+            z-index: 3000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            padding: 32px;
+        }
+
+        .lightbox.open {
+            display: flex;
+        }
+
+        .lightbox img {
+            max-width: 92vw;
+            max-height: 82vh;
+            object-fit: contain;
+            border-radius: 10px;
+            border: 1px solid var(--accent-cyan);
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8);
+        }
+
+        .lightbox-caption {
+            margin-top: 14px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        /* Bottom Navigation Bar */
+        .deck-footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 58px;
+            padding: 0 32px;
+            background: rgba(6, 10, 18, 0.85);
+            backdrop-filter: blur(12px);
+            border-top: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            z-index: 1500;
+        }
+
+        .footer-info {
+            font-size: 12px;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .nav-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .nav-btn {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border-subtle);
+            height: 36px;
+            padding: 0 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+        .nav-btn:hover {
+            border-color: var(--accent-cyan);
+            background: rgba(6, 182, 212, 0.15);
+        }
+
+        .slide-counter {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            color: var(--text-primary);
+            min-width: 72px;
+            text-align: center;
+        }
+
+        /* Cover Slide Special Styling */
+        .hero-badge-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        .hero-title {
+            font-family: var(--font-heading);
+            font-size: clamp(26px, 3.2vw, 46px);
+            font-weight: 700;
+            line-height: 1.16;
+            text-align: center;
+            max-width: 1180px;
+            margin: 0 auto;
+            background: linear-gradient(135deg, #FFFFFF 0%, #BAE6FD 55%, #34D399 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .qa-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            max-height: 410px;
+            overflow-y: auto;
+            padding-right: 6px;
+        }
+
+        .qa-item {
+            background: rgba(13, 21, 38, 0.9);
+            border: 1px solid var(--border-subtle);
+            border-radius: 10px;
+            padding: 12px 14px;
+        }
+
+        .qa-q {
+            font-weight: 700;
+            font-size: 13px;
+            color: #38BDF8;
+            margin-bottom: 5px;
+        }
+
+        .qa-a {
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            line-height: 1.45;
+        }
+
+        @media (max-width: 1024px) {
+            .grid-2, .grid-3, .grid-4, .qa-grid {
+                grid-template-columns: 1fr;
+            }
+            .col-4, .col-5, .col-6, .col-7, .col-8 {
+                grid-column: span 12;
+            }
+            .slide {
+                padding: 16px 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Progress Bar -->
+    <div class="progress-track">
+        <div class="progress-fill" id="progressBar"></div>
+    </div>
+
+    <!-- Top Header -->
+    <header class="deck-topbar">
+        <div class="topbar-left">
+            <span class="brand-pill">🛡️ NETGUARD LAB v2.0 & TECHSTORE</span>
+            <span>Đồ Án Lập Trình Mạng — ĐH CNTT & TT Việt – Hàn (VKU)</span>
+        </div>
+        <div class="topbar-right">
+            <span style="color: var(--text-muted);">Chuyển nhanh tới Slide:</span>
+            <select id="slideSelect" class="slide-jump-select" onchange="showSlide(parseInt(this.value))">
+                <option value="1">01. Trang bìa Đồ án</option>
+                <option value="2">02. Bối cảnh & Bài toán Thực tế</option>
+                <option value="3">03. Mục tiêu, Phạm vi & Kết quả</option>
+                <option value="4">04. Mô hình OSI 7 Tầng & Đóng gói</option>
+                <option value="5">05. Kiến trúc Hệ thống Client–Server</option>
+                <option value="6">06. Phân tích Thiết kế OOAD & UML</option>
+                <option value="7">07. Lập trình Socket: TCP vs UDP</option>
+                <option value="8">08. Thuật toán Phòng thủ TrafficGuard</option>
+                <option value="9">09. Thực nghiệm 1: Thông lượng 5 Kịch bản</option>
+                <option value="10">10. Thực nghiệm 2: Bật/Tắt Phòng thủ & Độ trễ</option>
+                <option value="11">11. Thực nghiệm 3: TCP vs UDP & Luật chặn</option>
+                <option value="12">12. Demo Kép: NetGuard Lab & TechStore</option>
+                <option value="13">13. Ngân hàng 24 Câu hỏi Bảo vệ Đồ án</option>
+                <option value="14">14. Kết luận & Hướng phát triển</option>
+            </select>
+            <button class="nav-btn" style="height: 28px; padding: 0 10px; font-size: 11px;" onclick="toggleFullScreen()">⛶ Toàn màn hình (F)</button>
+        </div>
+    </header>
+
+    <!-- Lightbox for Diagrams -->
+    <div class="lightbox" id="lightbox" onclick="closeLightbox()">
+        <img id="lightboxImg" src="" alt="Diagram Preview">
+        <div class="lightbox-caption" id="lightboxCaption"></div>
+        <div style="margin-top: 8px; font-size: 12px; color: var(--text-muted);">(Nhấn bất kỳ đâu hoặc phím ESC để đóng)</div>
+    </div>
+
+    <!-- SLIDE DECK -->
+    <main class="slide-deck">
+
+        <!-- ==================== SLIDE 1: TITLE ==================== -->
+        <section class="slide active" data-slide="1">
+            <div class="slide-inner" style="text-align: center; gap: 22px;">
+                <div class="hero-badge-row">
+                    <span class="status-pill pill-info">ĐẠI HỌC ĐÀ NẴNG • TRƯỜNG ĐH CNTT & TT VIỆT – HÀN (VKU)</span>
+                    <span class="status-pill pill-ok">KHOA KHOA HỌC MÁY TÍNH • HỌC PHẦN LẬP TRÌNH MẠNG</span>
+                </div>
+
+                <h1 class="hero-title">
+                    XÂY DỰNG HỆ THỐNG MÔ PHỎNG TẤN CÔNG VÀ PHÒNG THỦ TỪ CHỐI DỊCH VỤ (DOS/DDOS) THEO MÔ HÌNH CLIENT – SERVER SỬ DỤNG GIAO THỨC TCP/UDP
+                </h1>
+
+                <p style="max-width: 900px; margin: 0 auto; color: var(--text-secondary); font-size: 15px; line-height: 1.6;">
+                    Kiến trúc Socket đa luồng tường minh (<code>SOCK_STREAM</code> & <code>SOCK_DGRAM</code>), giao thức tầng ứng dụng JSON, phân tích đóng gói 7 tầng OSI và khiên phòng thủ cửa sổ trượt đa lớp (<code>TrafficGuard</code>) phân biệt <strong>Flash Crowd</strong> với <strong>DoS / DDoS / UDP Spoofing / Slowloris</strong>.
+                </p>
+
+                <div class="grid-3" style="max-width: 1020px; margin: 4px auto 0; width: 100%; text-align: left;">
+                    <div class="card card-blue">
+                        <div class="eyebrow">GIẢNG VIÊN HƯỚNG DẪN</div>
+                        <div style="font-size: 18px; font-weight: 700; color: var(--text-primary);">PGS.TS. Huỳnh Công Pháp</div>
+                        <div class="card-body">Định hướng phương pháp luận Lập trình mạng, kiến trúc OSI/TCP-IP & Phân tích thiết kế hướng đối tượng (OOAD).</div>
+                    </div>
+                    <div class="card card-emerald">
+                        <div class="eyebrow">SINH VIÊN THỰC HIỆN</div>
+                        <div style="font-size: 18px; font-weight: 700; color: var(--text-primary);">Đặng Quốc Toàn</div>
+                        <div class="card-body">Mã SV / Lớp: <code>24ITB200</code><br>Năm học: <strong>2025 – 2026</strong></div>
+                    </div>
+                    <div class="card card-purple">
+                        <div class="eyebrow">HỆ SINH THÁI THỰC NGHIỆM</div>
+                        <div style="font-size: 16px; font-weight: 700; color: var(--text-primary);">NetGuard Lab & TechStore</div>
+                        <div class="card-body"><code>:9000</code> Dual TCP/UDP Server<br><code>:8080</code> Web Control & NetShop<br><code>:5000</code> TechStore SQLite WAF</div>
+                    </div>
+                </div>
+
+                <div class="grid-4" style="max-width: 1020px; margin: 0 auto; width: 100%;">
+                    <div class="metric-box">
+                        <div class="metric-val" style="color: var(--accent-cyan);">2 Giao thức</div>
+                        <div class="metric-lbl">TCP Stream & UDP Datagram</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-val" style="color: var(--accent-emerald);">99.4%</div>
+                        <div class="metric-lbl">Bảo vệ khách thật dưới tải DDoS</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-val" style="color: var(--accent-amber);">5 Kịch bản</div>
+                        <div class="metric-lbl">Normal, Flash Crowd, DoS, DDoS, Spoof</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-val" style="color: var(--accent-rose);">11 / 11</div>
+                        <div class="metric-lbl">Unit Tests & Safety Guards Pass</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SLIDE 2: PROBLEM STATEMENT ==================== -->
+        <section class="slide" data-slide="2">
+            <div class="slide-inner">
+                <div class="slide-header">
+                    <div>
+                        <div class="eyebrow">01 / ĐẶT VẤN ĐỀ & LÝ DO CHỌN ĐỀ TÀI</div>
+                        <h2 class="slide-h2">Thách thức Độ sẵn sàng cao (HA): Tấn công DoS/DDoS vs. Flash Crowd</h2>
+                    </div>
+                    <span class="header-badge">Bối cảnh thực tiễn & Học thuật</span>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card card-rose">
+                        <div class="card-title">
+                            <span>🔥 1. Tấn công Từ chối Dịch vụ (DoS / DDoS / Spoofing)</span>
+                            <span class="status-pill pill-danger">ĐỘC HẠI</span>
+                        </div>
+                        <ul class="clean-list">
+                            <li><strong>DoS đơn nguồn (<code>SINGLE_IP</code>):</strong> Một máy trạm mở hàng chục luồng bắn dồn dập vào tài nguyên nặng (như <code>/login</code> băm mật khẩu SHA-256).</li>
+                            <li><strong>DDoS phân tán (<code>MULTI_IP</code>):</strong> Mạng lưới nhiều bot giữ tốc độ từng bot thấp (<code>8.5 req/s &lt; 40 req/s</code>) để lách luật cá nhân nhưng cùng đánh sập cổng dịch vụ.</li>
+                            <li><strong>UDP IP Spoofing (<code>UDP_SPOOF</code>):</strong> Lợi dụng tính phi kết nối của UDP để giả mạo hàng vạn IP nguồn ngẫu nhiên mỗi gói tin, làm tràn bảng theo dõi trạng thái.</li>
+                            <li><strong>Hậu quả khi không có phòng thủ:</strong> Cạn kiệt <code>listen backlog</code>, bão hòa toàn bộ Worker Threads, khách hàng thật nhận lỗi <code>503 SERVER_OVERLOADED</code>.</li>
+                        </ul>
+                    </div>
+
+                    <div class="card card-emerald">
+                        <div class="card-title">
+                            <span>🛍️ 2. Đám đông Đột biến Hợp lệ (Flash Crowd / Flash Sale)</span>
+                            <span class="status-pill pill-ok">HỢP LỆ</span>
+                        </div>
+                        <ul class="clean-list">
+                            <li><strong>Bối cảnh:</strong> Giờ vàng Flash Sale 0h00, đăng ký tín chỉ đại học hoặc mở bán vé sự kiện — hàng chục khách hàng thật cùng truy cập đồng thời.</li>
+                            <li><strong>Đặc trưng hành vi:</strong> Tổng thông lượng toàn mạng tăng vọt (<code>~160–300 req/s</code>) ngang ngửa một cuộc tấn công DoS, nhưng tốc độ mỗi người vừa phải (có độ trễ ngẫu nhiên <code>jitter 35%</code>).</li>
+                            <li><strong>Hành trình đa dạng:</strong> Người dùng duyệt tuần tự qua 6 trang <code>/home</code>, <code>/products</code>, <code>/search</code>, <code>/detail</code>, <code>/cart</code>, <code>/checkout</code>.</li>
+                            <li><strong>Bài toán cốt lõi:</strong> Nếu chỉ cắt cơ học theo ngưỡng tổng IP, hệ thống sẽ <strong>chặn nhầm toàn bộ khách hàng thật (False Positive)</strong>!</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="card card-blue">
+                    <div class="card-title">
+                        <span>🎯 Khoảng trống trong thực hành Lập trình mạng & Giải pháp của Đề tài</span>
+                        <span class="status-pill pill-info">SAFE LAB SIMULATION</span>
+                    </div>
+                    <div class="grid-3" style="margin-top: 4px;">
+                        <div>
+                            <strong style="color: #38BDF8; font-size: 13px;">Hạn chế truyền thống</strong>
+                            <p class="card-body" style="margin-top: 4px;">Các bài tập Socket cơ bản chỉ gửi/nhận chuỗi đơn lẻ 1 Client – 1 Server, thiếu góc nhìn về cạnh tranh đa luồng, nghẽn cổ chai và framing luồng byte.</p>
+                        </div>
+                        <div>
+                            <strong style="color: #34D399; font-size: 13px;">Giải pháp NetGuard Lab v2.0</strong>
+                            <p class="card-body" style="margin-top: 4px;">Xây dựng trọn vẹn bằng thư viện chuẩn <code>socket</code> & <code>threading</code> của Python, đo kiểm định lượng RTT, RPS, Trust Score và phân loại hành vi thời gian thực.</p>
+                        </div>
+                        <div>
+                            <strong style="color: #FBBF24; font-size: 13px;">Khóa An toàn Cứng (Hard Safety)</strong>
+                            <p class="card-body" style="margin-top: 4px;">Chỉ hoạt động trong <code>127.0.0.0/8</code> và 3 dải <code>RFC1918</code>. Tự động từ chối mọi IP Public, tên miền Internet và <code>0.0.0.0</code> ngay tại <code>validate_lab_address()</code>.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SLIDE 3: SOLUTION & SCOPE ==================== -->
+        <section class="slide" data-slide="3">
+            <div class="slide-inner">
+                <div class="slide-header">
+                    <div>
+                        <div class="eyebrow">02 / ĐỐI TƯỢNG NGHIÊN CỨU, PHẠM VI & KẾT QUẢ</div>
+                        <h2 class="slide-h2">4 Trụ cột Kỹ thuật & Giới hạn An toàn Cứng (Hard Limits)</h2>
+                    </div>
+                    <span class="header-badge">Python 3.10+ Standard Library</span>
+                </div>
+
+                <div class="grid-4">
+                    <div class="card">
+                        <div class="eyebrow">TRỤ CỘT 01</div>
+                        <div class="card-title">Dual Socket Server</div>
+                        <p class="card-body">Chạy độc lập hoặc đồng thời cả <strong>TCP (<code>SOCK_STREAM</code>)</strong> và <strong>UDP (<code>SOCK_DGRAM</code>)</strong> trên cổng <code>9000</code>, phục vụ 6 nghiệp vụ thương mại điện tử NetShop.</p>
+                    </div>
+                    <div class="card card-emerald">
+                        <div class="eyebrow">TRỤ CỘT 02</div>
+                        <div class="card-title">Khiên TrafficGuard</div>
+                        <p class="card-body">Cửa sổ trượt 1.0 giây (<code>deque</code> $O(1)$) 3 lớp kết hợp phân tích tỷ lệ đường dẫn áp đảo <code>dominant_path_ratio</code> & điểm tin cậy <code>Trust Score</code>.</p>
+                    </div>
+                    <div class="card card-purple">
+                        <div class="eyebrow">TRỤ CỘT 03</div>
+                        <div class="card-title">Multi-Client Simulator</div>
+                        <p class="card-body">Điều phối tới 50 luồng <code>logical clients</code> song song với bộ nhịp <code>WorkerPacer</code> hỗ trợ <code>jitter 35%</code> và 3 chế độ IP (<code>SINGLE</code>, <code>MULTI</code>, <code>SPOOF</code>).</p>
+                    </div>
+                    <div class="card card-amber">
+                        <div class="eyebrow">TRỤ CỘT 04</div>
+                        <div class="card-title">Web UI & TechStore</div>
+                        <p class="card-body">Giao diện điều khiển trung tâm <code>NetGuard Lab (:8080)</code>, Terminal <code>Rich</code> Dashboard và Web bán hàng thật <code>TechStore (:5000)</code> dùng SQLite.</p>
+                    </div>
+                </div>
+
+                <div class="grid-12">
+                    <div class="card col-7">
+                        <div class="card-title">
+                            <span>🔒 Bảng Cấu hình Giới hạn An toàn Cứng (<code>common/config.py</code>)</span>
+                            <span class="status-pill pill-info">KHÔNG THỂ VƯỢT TRẦN</span>
+                        </div>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Thông số giới hạn (Hard Limit)</th>
+                                    <th>Hằng số trong Code</th>
+                                    <th>Giá trị Trần</th>
+                                    <th>Mục đích bảo vệ môi trường Lab</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><strong>Dải IP cho phép</strong></td>
+                                    <td><code>LAB_NETWORKS</code></td>
+                                    <td><span class="status-pill pill-ok">Loopback & RFC1918</span></td>
+                                    <td>Chặn tuyệt đối IP Public, Internet & <code>0.0.0.0</code></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Số luồng Client tối đa</strong></td>
+                                    <td><code>MAX_CLIENTS</code></td>
+                                    <td><code>50 clients</code></td>
+                                    <td>Ngăn quá tải bộ lập lịch luồng hệ điều hành máy trạm</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Tốc độ gửi mỗi Client</strong></td>
+                                    <td><code>MAX_REQUEST_RATE</code></td>
+                                    <td><code>20.0 req/s</code></td>
+                                    <td>Đảm bảo tổng tải mô phỏng nằm trong tầm kiểm soát</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Thời lượng mô phỏng</strong></td>
+                                    <td><code>MAX_DURATION</code></td>
+                                    <td><code>60 giây</code></td>
+                                    <td>Chống chạy vòng lặp vô hạn (Không có chế độ gửi vô tận)</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Kết nối TCP đồng thời</strong></td>
+                                    <td><code>MAX_CONCURRENT_CONNECTIONS</code></td>
+                                    <td><code>100 slots</code></td>
+                                    <td>Giới hạn bằng <code>BoundedSemaphore(100)</code> chống tràn RAM</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Kích thước bản tin tối đa</strong></td>
+                                    <td><code>MAX_MESSAGE_BYTES</code></td>
+                                    <td><code>4,096 Bytes</code></td>
+                                    <td>Chống tấn công làm tràn bộ đệm đọc JSON</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="card card-emerald col-5">
+                        <div class="card-title">
+                            <span>✅ Tổng kết Kết quả Đạt được</span>
+                            <span class="status-pill pill-ok">HOÀN THÀNH 100%</span>
+                        </div>
+                        <ul class="clean-list">
+                            <li><strong>&gt; 2.000 dòng code Python 3.10+ sạch</strong> chia thành 4 phân hệ hướng đối tượng (<code>common</code>, <code>server</code>, <code>client</code>, <code>web</code>) + ứng dụng <code>real_ecommerce_shop</code>.</li>
+                            <li><strong>Phân biệt chính xác 100% Flash Crowd:</strong> Tự động nâng trần IP nguồn từ <code>250 req/s</code> lên <code>600 req/s</code>, phục vụ 100% khách săn sale với độ trễ <code>&lt; 6.8 ms</code>.</li>
+                            <li><strong>Chặn đứng 73% – 93.7% gói tin tấn công:</strong> Bảo vệ người dùng thật trên cùng IP đạt tỷ lệ mua hàng thành công <strong>99.4%</strong>.</li>
+                            <li><strong>Báo cáo học thuật chuẩn mực:</strong> Đầy đủ 12 biểu đồ kiến trúc, UML, 7 tầng OSI và kiểm thử tự động <code>unittest</code>.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SLIDE 4: OSI 7 LAYERS & ENCAPSULATION ==================== -->
+        <section class="slide" data-slide="4">
+            <div class="slide-inner">
+                <div class="slide-header">
+                    <div>
+                        <div class="eyebrow">03 / CƠ SỞ LÝ THUYẾT & QUÁ TRÌNH TRUYỀN THÔNG LIÊN MẠNG</div>
+                        <h2 class="slide-h2">Đối chiếu OSI 7 Tầng, TCP/IP 4 Tầng & Quá trình Đóng gói (Encapsulation)</h2>
+                    </div>
+                    <div class="tab-bar">
+                        <button class="tab-btn active" onclick="switchOsiTab('osi7', this)">Sơ đồ Encapsulation 7 Tầng</button>
+                        <button class="tab-btn" onclick="switchOsiTab('mapping', this)">Đối chiếu OSI & TCP/IP</button>
+                    </div>
+                </div>
+
+                <div class="grid-12">
+                    <div class="col-6">
+                        <div id="osiTab-osi7" class="fig-frame">
+                            <img src="network_dos_ddos_simulator/docs/report_images/fig07_osi_7layer_encapsulation.png"
+                                 onerror="this.src='report_images/fig07_osi_7layer_encapsulation.png'"
+                                 onclick="openLightbox(this.src, 'Hình 2.6: Quá trình hai máy ở xa nhau liên lạc qua 7 tầng OSI (Encapsulation & Decapsulation)')"
+                                 alt="OSI 7 Layer Encapsulation">
+                            <div class="fig-caption">🔍 Nhấn vào ảnh để phóng to: Quá trình Đóng gói (Tầng 7→1) & Mở gói (Tầng 1→7) qua mạng LAN</div>
+                        </div>
+                        <div id="osiTab-mapping" class="fig-frame" style="display: none;">
+                            <img src="network_dos_ddos_simulator/docs/report_images/fig01_osi_tcpip_mapping.png"
+                                 onerror="this.src='report_images/fig01_osi_tcpip_mapping.png'"
+                                 onclick="openLightbox(this.src, 'Hình 1.1: Đối chiếu Mô hình OSI 7 tầng, TCP/IP 4 tầng và Kiến trúc giao thức trong đề tài')"
+                                 alt="OSI vs TCP/IP Mapping">
+                            <div class="fig-caption">🔍 Nhấn vào ảnh để phóng to: Đối chiếu OSI 7 tầng, TCP/IP 4 tầng & Kiến trúc Project</div>
+                        </div>
+                    </div>
+
+                    <div class="col-6" style="display: flex; flex-direction: column; gap: 12px;">
+                        <div class="card">
+                            <div class="card-title">
+                                <span>📦 Ánh xạ Chi tiết 7 Tầng OSI vào Mã nguồn Project</span>
+                                <span class="status-pill pill-info">BYTE-LEVEL LAYOUT</span>
+                            </div>
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Tầng OSI</th>
+                                        <th>PDU</th>
+                                        <th>Hiện thực hóa trong Project (<code>network_dos_ddos_simulator</code>)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><strong>7. Application</strong></td>
+                                        <td><code>Message</code></td>
+                                        <td>Giao thức JSON NetShop (<code>/home</code>, <code>/products</code>, <code>/cart</code>, <code>/login</code>) & HTTP Web UI <code>:8080</code></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>6. Presentation</strong></td>
+                                        <td><code>Data</code></td>
+                                        <td><code>json.dumps()</code>, mã hóa <code>UTF-8</code>, đóng khung <code>\n</code> (TCP) & giới hạn <code>4096B</code></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>5. Session</strong></td>
+                                        <td><code>Data</code></td>
+                                        <td>Quản lý phiên bằng <code>BoundedSemaphore(100)</code>, cửa sổ phiên <code>2.0s</code> & lịch sử đường dẫn</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>4. Transport</strong></td>
+                                        <td><code>Segment / Datagram</code></td>
+                                        <td><strong>TCP (<code>SOCK_STREAM</code>)</strong> & <strong>UDP (<code>SOCK_DGRAM</code>)</strong> trên Port <code>9000</code>, Ephemeral Port phía Client</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>3. Network</strong></td>
+                                        <td><code>Packet</code></td>
+                                        <td>Định địa chỉ <strong>IPv4 (<code>AF_INET</code>)</strong>, lọc <code>RFC1918</code> & mô phỏng <code>SINGLE_IP / MULTI_IP / UDP_SPOOF</code></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>1–2. Link & Phy</strong></td>
+                                        <td><code>Frame / Bit</code></td>
+                                        <td>Khung Ethernet II (14B MAC Header + 4B FCS) qua Switch LAN hoặc Loopback NDIS</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="card card-amber">
+                            <div class="card-title" style="font-size: 14px;">
+                                <span>🔬 Cấu trúc Khung Byte Thực tế trên Đường truyền (144 Bytes Payload JSON)</span>
+                            </div>
+                            <pre class="code-block"><span class="cm"># Khung gói tin TCP JSON trên mạng LAN (Tổng = 198 Bytes):</span>
+[Ethernet II: <span class="num">14B</span>] + [IPv4 Header: <span class="num">20B</span>] + [TCP Header: <span class="num">20B</span>] + [JSON UTF-8 + '\n': <span class="num">144B</span>]
+
+<span class="cm"># Khung gói tin UDP Datagram trên mạng LAN (Tổng = 185 Bytes - Không cần '\n'):</span>
+[Ethernet II: <span class="num">14B</span>] + [IPv4 Header: <span class="num">20B</span>] + [UDP Header: <span class="num">8B</span>]  + [JSON UTF-8: <span class="num">143B</span>]</pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SLIDE 5: SYSTEM ARCHITECTURE ==================== -->
+        <section class="slide" data-slide="5">
+            <div class="slide-inner">
+                <div class="slide-header">
+                    <div>
+                        <div class="eyebrow">04 / KIẾN TRÚC TỔNG THỂ HỆ THỐNG</div>
+                        <h2 class="slide-h2">Mô hình Client – Server Đa luồng & Tổ chức 4 Phân hệ Phần mềm</h2>
+                    </div>
+                    <span class="header-badge">Dual-Stack Port 9000 + Web Port 8080</span>
+                </div>
+
+                <div class="grid-12">
+                    <div class="col-6">
+                        <div class="fig-frame">
+                            <img src="network_dos_ddos_simulator/docs/report_images/fig02_system_architecture.png"
+                                 onerror="this.src='report_images/fig02_system_architecture.png'"
+                                 onclick="openLightbox(this.src, 'Hình 2.1: Kiến trúc tổng thể hệ thống mô phỏng tấn công & phòng thủ DoS/DDoS')"
+                                 alt="System Architecture">
+                            <div class="fig-caption">🔍 Nhấn vào ảnh để phóng to: Kiến trúc tổng thể hệ thống Client Simulator – Test Server – Web Dashboard</div>
+                        </div>
+                    </div>
+
+                    <div class="col-6" style="display: flex; flex-direction: column; gap: 12px;">
+                        <div class="grid-2">
+                            <div class="card card-blue">
+                                <div class="eyebrow">PHÂN HỆ 1 • common/</div>
+                                <div class="card-title" style="font-size: 14.5px;">Nền tảng & Giao thức</div>
+                                <p class="card-body" style="font-size: 12.5px;"><code>config.py</code> (Hard limits), <code>network_utils.py</code> (RFC1918 guard), <code>protocol.py</code> (JSON encode/decode, TCP <code>\n</code> framing, danh mục NetShop).</p>
+                            </div>
+                            <div class="card card-emerald">
+                                <div class="eyebrow">PHÂN HỆ 2 • server/</div>
+                                <div class="card-title" style="font-size: 14.5px;">Máy chủ Kép & Phòng thủ</div>
+                                <p class="card-body" style="font-size: 12.5px;"><code>tcp_server.py</code>, <code>udp_server.py</code>, <code>client_handler.py</code>, <code>traffic_guard.py</code> (Khiên 3 lớp), <code>statistics.py</code> & <code>monitor.py</code>.</p>
+                            </div>
+                            <div class="card card-amber">
+                                <div class="eyebrow">PHÂN HỆ 3 • client/</div>
+                                <div class="card-title" style="font-size: 14.5px;">Bộ Tạo tải Đa luồng</div>
+                                <p class="card-body" style="font-size: 12.5px;"><code>simulator.py</code> (50 luồng Worker, <code>WorkerPacer</code> jitter), <code>tcp_client.py</code>, <code>udp_client.py</code> & <code>ClientMetrics</code>.</p>
+                            </div>
+                            <div class="card card-purple">
+                                <div class="eyebrow">PHÂN HỆ 4 • web/</div>
+                                <div class="card-title" style="font-size: 14.5px;">Web Control Surface</div>
+                                <p class="card-body" style="font-size: 12.5px;"><code>app.py</code> (<code>ThreadingHTTPServer :8080</code>), REST API điều khiển Server/Simulator & cổng trực tuyến <strong>NetShop Portal</strong>.</p>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-title" style="font-size: 14px;">
+                                <span>⚙️ Cơ chế Chia sẻ Trạng thái An toàn Đa luồng (Thread-Safe Shared State)</span>
+                            </div>
+                            <ul class="clean-list" style="font-size: 12.5px;">
+                                <li>Cả <code>TcpServer</code> và <code>UdpServer</code> cùng tham chiếu chung một đối tượng <strong><code>TrafficGuard</code></strong> và <strong><code>ServerStatistics</code></strong> được bảo vệ bằng <code>threading.Lock</code>.</li>
+                                <li><strong>Ý nghĩa bảo mật:</strong> Kẻ tấn công không thể lách giới hạn tốc độ bằng cách vừa bắn TCP vừa bắn UDP đồng thời — mọi gói tin đều được tính chung trong cửa sổ trượt 1 giây!</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SLIDE 6: OOAD & UML DIAGRAMS ==================== -->
+        <section class="slide" data-slide="6">
+            <div class="slide-inner">
+                <div class="slide-header">
+                    <div>
+                        <div class="eyebrow">05 / PHÂN TÍCH & THIẾT KẾ HƯỚNG ĐỐI TƯỢNG (OOAD)</div>
+                        <h2 class="slide-h2">Hệ thống Biểu đồ UML Chuẩn mực (Use Case, Activity, Sequence, Class)</h2>
+                    </div>
+                    <div class="tab-bar">
+                        <button class="tab-btn active" onclick="switchUmlTab('usecase', this)">1. Use Case</button>
+                        <button class="tab-btn" onclick="switchUmlTab('activity', this)">2. Activity (TrafficGuard)</button>
+                        <button class="tab-btn" onclick="switchUmlTab('sequence', this)">3. Sequence (TCP/UDP)</button>
+                        <button class="tab-btn" onclick="switchUmlTab('class', this)">4. Class Diagram</button>
+                    </div>
+                </div>
+
+                <div class="grid-12">
+                    <div class="col-7">
+                        <div id="umlTab-usecase" class="fig-frame">
+                            <img src="network_dos_ddos_simulator/docs/report_images/fig03_usecase_diagram.png"
+                                 onerror="this.src='report_images/fig03_usecase_diagram.png'"
+                                 onclick="openLightbox(this.src, 'Hình 2.2: Biểu đồ Use Case tổng quát của hệ thống')"
+                                 alt="Use Case Diagram">
+                            <div class="fig-caption">🔍 Nhấn vào ảnh để phóng to: Biểu đồ Use Case tổng quát (3 Actors & 9 Use Cases cốt lõi)</div>
+                        </div>
+                        <div id="umlTab-activity" class="fig-frame" style="display: none;">
+                            <img src="network_dos_ddos_simulator/docs/report_images/fig04_activity_traffic_guard.png"
+                                 onerror="this.src='report_images/fig04_activity_traffic_guard.png'"
+                                 onclick="openLightbox(this.src, 'Hình 2.3: Biểu đồ Hoạt động (Activity Diagram) thuật toán phòng thủ đa lớp TrafficGuard')"
+                                 alt="Activity Diagram">
+                            <div class="fig-caption">🔍 Nhấn vào ảnh để phóng to: Biểu đồ Hoạt động (Activity Diagram) thuật toán phân loại & chặn của TrafficGuard</div>
+                        </div>
+                        <div id="umlTab-sequence" class="fig-frame" style="display: none;">
+                            <img src="network_dos_ddos_simulator/docs/report_images/fig05_sequence_tcp_udp.png"
+                                 onerror="this.src='report_images/fig05_sequence_tcp_udp.png'"
+                                 onclick="openLightbox(this.src, 'Hình 2.4: Biểu đồ Tuần tự (Sequence Diagram) tương tác Client – Server qua TCP và UDP')"
+                                 alt="Sequence Diagram">
+                            <div class="fig-caption">🔍 Nhấn vào ảnh để phóng to: Biểu đồ Tuần tự (Sequence Diagram) đối chiếu chu trình TCP và UDP</div>
+                        </div>
+                        <div id="umlTab-class" class="fig-frame" style="display: none;">
+                            <img src="network_dos_ddos_simulator/docs/report_images/fig06_class_diagram.png"
+                                 onerror="this.src='report_images/fig06_class_diagram.png'"
+                                 onclick="openLightbox(this.src, 'Hình 2.5: Biểu đồ Lớp (Class Diagram) toàn hệ thống theo thiết kế hướng đối tượng')"
+                                 alt="Class Diagram">
+                            <div class="fig-caption">🔍 Nhấn vào ảnh để phóng to: Biểu đồ Lớp (Class Diagram) toàn hệ thống</div>
+                        </div>
+                    </div>
+
+                    <div class="col-5" style="display: flex; flex-direction: column; gap: 12px;">
+                        <div class="card card-blue">
+                            <div class="card-title">👥 3 Tác nhân (Actors) trong Hệ thống</div>
+                            <ul class="clean-list" style="font-size: 12.8px;">
+                                <li><strong>Quản trị viên Phòng Lab (<code>Admin</code>):</strong> Khởi động/dừng <code>TestServer</code> (TCP/UDP/BOTH), bật/tắt <code>TrafficGuard</code>, giám sát Telemetry & nhật ký <code>server.log</code>.</li>
+                                <li><strong>Người Kiểm thử Tải (<code>Tester</code>):</strong> Cấu hình và phát tải 5 kịch bản (<code>NORMAL</code>, <code>FLASH_CROWD</code>, <code>DOS</code>, <code>DDOS</code>, <code>UDP_SPOOF</code>), đo RTT & RPS.</li>
+                                <li><strong>Khách Mua hàng (<code>Visitor</code>):</strong> Truy cập cổng thương mại điện tử <strong>NetShop Portal</strong> để duyệt hàng hóa, giỏ hàng và thanh toán trực tiếp.</li>
+                            </ul>
+                        </div>
+
+                        <div class="card card-emerald">
+                            <div class="card-title">📐 Điểm nhấn Thiết kế Hướng đối tượng</div>
+                            <ul class="clean-list" style="font-size: 12.8px;">
+                                <li><strong>Tính đóng gói & Bất biến (Immutability):</strong> Các kết quả trả về như <code>DefenseDecision</code>, <code>StatisticsSnapshot</code>, <code>ClientSnapshot</code> dùng <code>@dataclass(frozen=True)</code> tránh bị sửa đổi ngoài ý muốn giữa các luồng.</li>
+                                <li><strong>Tách biệt giao vận & nghiệp vụ:</strong> <code>TcpServer</code> và <code>UdpServer</code> chỉ lo tầng Socket, còn kiểm duyệt an toàn và tạo phản hồi JSON được ủy quyền cho <code>client_handler.py</code> và <code>TrafficGuard</code>.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SLIDE 7: TCP VS UDP SOCKET PROGRAMMING ==================== -->
+        <section class="slide" data-slide="7">
+            <div class="slide-inner">
+                <div class="slide-header">
+                    <div>
+                        <div class="eyebrow">06 / KỸ THUẬT LẬP TRÌNH SOCKET TẦNG GIAO VẬN</div>
+                        <h2 class="slide-h2">So sánh Trực diện TCP (<code>SOCK_STREAM</code>) và UDP (<code>SOCK_DGRAM</code>)</h2>
+                    </div>
+                    <span class="header-badge">common/protocol.py • server/tcp_server.py • server/udp_server.py</span>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card card-blue">
+                        <div class="card-title">
+                            <span>🔵 Giao thức TCP (Connection-Oriented Stream)</span>
+                            <span class="status-pill pill-info">SOCK_STREAM</span>
+                        </div>
+                        <pre class="code-block"><span class="cm"># Chu trình TCP Server (server/tcp_server.py):</span>
+<span class="kw">with</span> socket.<span class="fn">socket</span>(socket.AF_INET, socket.SOCK_STREAM) <span class="kw">as</span> srv:
+    srv.<span class="fn">bind</span>((self.host, self.port))
+    srv.<span class="fn">listen</span>(<span class="num">128</span>)
+    client_sock, addr = srv.<span class="fn">accept</span>() <span class="cm"># Sau 3-way handshake</span>
+    <span class="kw">if</span> self._slots.<span class="fn">acquire</span>(blocking=<span class="kw">False</span>): <span class="cm"># Semaphore(100)</span>
+        threading.<span class="fn">Thread</span>(target=handle_tcp_client, ...).<span class="fn">start</span>()
+
+<span class="cm"># Đọc khung thông điệp kết thúc bằng '\n' trên luồng byte:</span>
+<span class="kw">while</span> <span class="fn">len</span>(buffer) &lt;= <span class="num">4096</span>:
+    chunk = conn.<span class="fn">recv</span>(<span class="num">1024</span>)
+    buffer.<span class="fn">extend</span>(chunk)
+    <span class="kw">if</span> <span class="str">b"\n"</span> <span class="kw">in</span> chunk: <span class="kw">break</span></pre>
+                        <ul class="clean-list" style="font-size: 12.5px;">
+                            <li><strong>Đặc trưng Byte Stream:</strong> TCP không tự giữ biên bản tin nên phải nối ký tự <code>b"\n"</code> vào cuối mỗi chuỗi JSON.</li>
+                            <li><strong>Chống Giả mạo IP Tuyệt đối (100%):</strong> Phải hoàn tất bắt tay 3 bước (<code>SYN</code> → <code>SYN-ACK</code> → <code>ACK</code>) trước khi gửi JSON nên chế độ <code>UDP_SPOOF</code> bị vô hiệu hóa hoàn toàn trên TCP.</li>
+                        </ul>
+                    </div>
+
+                    <div class="card card-amber">
+                        <div class="card-title">
+                            <span>🟠 Giao thức UDP (Connectionless Datagram)</span>
+                            <span class="status-pill pill-warn">SOCK_DGRAM</span>
+                        </div>
+                        <pre class="code-block"><span class="cm"># Chu trình UDP Server (server/udp_server.py):</span>
+<span class="kw">with</span> socket.<span class="fn">socket</span>(socket.AF_INET, socket.SOCK_DGRAM) <span class="kw">as</span> srv:
+    srv.<span class="fn">bind</span>((self.host, self.port))
+    <span class="cm"># KHÔNG có listen() và KHÔNG có accept()!</span>
+    data, addr = srv.<span class="fn">recvfrom</span>(<span class="num">4097</span>) <span class="cm"># Nhận trọn 1 Datagram</span>
+    result = <span class="fn">process_udp_datagram</span>(data, addr, stats, guard)
+    srv.<span class="fn">sendto</span>(result.response_data, addr)
+
+<span class="cm"># Chu trình UDP Client (client/udp_client.py):</span>
+sock.<span class="fn">settimeout</span>(<span class="num">3.0</span>) <span class="cm"># Bắt buộc vì UDP không đảm bảo gói về</span>
+sock.<span class="fn">sendto</span>(request_data, server_address)
+resp_data, resp_addr = sock.<span class="fn">recvfrom</span>(<span class="num">4096</span>)</pre>
+                        <ul class="clean-list" style="font-size: 12.5px;">
+                            <li><strong>Bảo toàn biên Datagram:</strong> Mỗi lệnh <code>sendto()</code> chuyển đúng 1 gói độc lập, không cần ký tự <code>\n</code>, độ trễ thấp hơn TCP gấp <strong>3.1 lần</strong>.</li>
+                            <li><strong>Nguy cơ <code>UDP_SPOOF</code>:</strong> Vì không cần bắt tay, kẻ tấn công dễ dàng đổi IP nguồn giả mạo ở mỗi gói tin, đòi hỏi <code>TrafficGuard</code> phải phát hiện ở tầng ứng dụng.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SLIDE 8: TRAFFIC GUARD ALGORITHM ==================== -->
+        <section class="slide" data-slide="8">
+            <div class="slide-inner">
+                <div class="slide-header">
+                    <div>
+                        <div class="eyebrow">07 / THUẬT TOÁN PHÒNG THỦ ĐA LỚP (SERVER/TRAFFIC_GUARD.PY)</div>
+                        <h2 class="slide-h2">Cửa sổ trượt 1 Giây & Phân loại Hành vi: Flash Crowd vs. DoS/DDoS</h2>
+                    </div>
+                    <span class="header-badge">Độ phức tạp trượt cửa sổ O(1) với collections.deque</span>
+                </div>
+
+                <div class="grid-3">
+                    <div class="card card-blue">
+                        <div class="eyebrow">LỚP PHÒNG THỦ 01 & 02</div>
+                        <div class="card-title">Giới hạn Toàn Server & IP Nguồn</div>
+                        <ul class="clean-list" style="font-size: 12.8px;">
+                            <li><strong>Toàn Server (<code>GLOBAL_RATE_LIMIT</code>):</strong> Chặn cứng ở <code>1,000 req/s</code> dùng chung cho cả TCP & UDP.</li>
+                            <li><strong>Theo IP Nguồn (<code>SOURCE_RATE_LIMIT</code>):</strong> Cảnh báo ở <code>100 req/s</code>, chặn ở <code>250 req/s</code>.</li>
+                            <li><strong>Cơ chế Thích nghi Thông minh:</strong> Nếu nhận diện là <strong><code>FLASH_CROWD</code></strong>, tự động mở rộng trần IP nguồn lên <strong><code>600 req/s</code></strong>!</li>
+                        </ul>
+                    </div>
+
+                    <div class="card card-amber">
+                        <div class="eyebrow">LỚP PHÒNG THỦ 03</div>
+                        <div class="card-title">Giới hạn Định danh & Chống Spoof</div>
+                        <ul class="clean-list" style="font-size: 12.8px;">
+                            <li><strong>Theo Client ID (<code>CLIENT_RATE_LIMIT</code>):</strong> Cảnh báo ở <code>15 req/s</code>, chặn ở <code>40 req/s</code> (Khóa đứng kịch bản DoS <code>dos_source_01</code>).</li>
+                            <li><strong>Chống UDP Spoofing (<code>UDP_SPOOF_DETECTED</code>):</strong> Phát hiện khi <code>active_unique_ips &ge; 12</code> hoặc cờ <code>UDP_SPOOF</code> vượt ngưỡng cảnh báo.</li>
+                            <li><strong>Chống tràn RAM:</strong> Tự động dọn rác <code>_prune_identity_maps()</code> khi vượt <code>1,024</code> khóa.</li>
+                        </ul>
+                    </div>
+
+                    <div class="card card-emerald">
+                        <div class="eyebrow">TRÍ TUỆ HÀNH VI (BEHAVIORAL)</div>
+                        <div class="card-title">Tách biệt Khách thật & Đàn Bot</div>
+                        <ul class="clean-list" style="font-size: 12.8px;">
+                            <li><strong>Tỷ lệ đường dẫn áp đảo ($D$):</strong><br><code>dominant_path_ratio = top_path / total</code></li>
+                            <li><strong>Khách thật / Flash Crowd:</strong> Duyệt $\ge 3$ trang (<code>/home</code>, <code>/products</code>, <code>/cart</code>...) $\rightarrow D &lt; 0.75$ và <code>client_rps &le; 12</code> $\rightarrow$ <strong>Cho phép 100% (Trust 95)</strong>.</li>
+                            <li><strong>Botnet DDoS:</strong> $\ge 8$ bot cùng bắn vào <code>/login</code> ($D \ge 0.75$, tổng $> 80\text{ r/s}$) $\rightarrow$ Khóa bằng <strong><code>DDOS_BOT_DETECTED</code></strong>!</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title" style="font-size: 14px;">
+                        <span>💻 Đoạn mã Hạt nhân Phân loại Hành vi trong <code>server/traffic_guard.py</code></span>
+                        <span class="status-pill pill-ok">100% ACCURACY TRÊN UNIT TEST</span>
+                    </div>
+                    <pre class="code-block">is_human_client = (
+    ip_mode != <span class="str">"UDP_SPOOF"</span> <span class="kw">and</span> client_rps &lt;= <span class="num">12</span>
+    <span class="kw">and</span> (unique_client_paths &gt;= <span class="num">2</span> <span class="kw">or</span> (client_rps &lt;= <span class="num">4</span> <span class="kw">and</span> normalized_path != dominant_path))
+)
+is_flash_crowd = (
+    ip_mode != <span class="str">"UDP_SPOOF"</span> <span class="kw">and</span> active_source_clients &gt;= <span class="num">8</span>
+    <span class="kw">and</span> unique_source_paths &gt;= <span class="num">3</span> <span class="kw">and</span> dominant_path_ratio &lt; <span class="num">0.75</span> <span class="kw">and</span> client_rps &lt;= <span class="num">12</span>
+)
+is_ddos_bot_flood = (
+    <span class="fn">max</span>(source_rps, global_rps) &gt; <span class="num">80</span> <span class="kw">and</span> active_source_clients &gt;= <span class="num">8</span>
+    <span class="kw">and not</span> is_flash_crowd <span class="kw">and not</span> is_human_client
+)</pre>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SLIDE 9: BENCHMARK 1 - RPS ACROSS 5 SCENARIOS ==================== -->
+        <section class="slide" data-slide="9">
+            <div class="slide-inner">
+                <div class="slide-header">
+                    <div>
+                        <div class="eyebrow">08 / KẾT QUẢ THỰC NGHIỆM 1 (THỜI LƯỢNG ĐO T = 15 GIÂY)</div>
+                        <h2 class="slide-h2">So sánh Thông lượng (RPS) & Tỷ lệ Chặn trên 5 Kịch bản Lưu lượng</h2>
+                    </div>
+                    <span class="header-badge">TrafficGuard = ON • Port 9000</span>
+                </div>
+
+                <div class="grid-12">
+                    <div class="card col-6">
+                        <div class="card-title">
+                            <span>📊 Biểu đồ Thông lượng Phục vụ (200 OK) vs. Bị Chặn (429 Blocked)</span>
+                        </div>
+                        <div style="height: 250px; width: 100%; position: relative;">
+                            <canvas id="rpsChart"></canvas>
+                        </div>
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">
+                            💡 <strong>Điểm nhấn:</strong> <code>FLASH_CROWD</code> (158 RPS) và <code>DOS_SIMULATION</code> (160 RPS) có mức tải ngang nhau, nhưng <code>FLASH_CROWD</code> được phục vụ <strong>100%</strong> trong khi <code>DOS</code> bị cắt <strong>75%</strong>!
+                        </div>
+                    </div>
+
+                    <div class="card col-6">
+                        <div class="card-title">
+                            <span>📋 Bảng Số liệu Thực nghiệm Chi tiết (Bảng 3.1 Báo cáo)</span>
+                        </div>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Kịch bản</th>
+                                    <th>Cấu hình</th>
+                                    <th>RPS</th>
+                                    <th>200 OK</th>
+                                    <th>429 Chặn</th>
+                                    <th>Trust</th>
+                                    <th>Luật Kích hoạt</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><strong>1. NORMAL</strong></td>
+                                    <td>5c × 1.5 r/s</td>
+                                    <td><code>8</code></td>
+                                    <td><span class="status-pill pill-ok">100%</span></td>
+                                    <td>0%</td>
+                                    <td><code>100</code></td>
+                                    <td><code>NORMAL</code></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>2. FLASH_CROWD</strong></td>
+                                    <td>35c × 4.5 r/s</td>
+                                    <td><code>158</code></td>
+                                    <td><span class="status-pill pill-ok">100%</span></td>
+                                    <td>0%</td>
+                                    <td><code>95</code></td>
+                                    <td><code>FLASH_CROWD (600 r/s)</code></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>3. DOS_SIM</strong></td>
+                                    <td>20w × 8.0 r/s</td>
+                                    <td><code>160</code></td>
+                                    <td>25.0%</td>
+                                    <td><span class="status-pill pill-danger">75.0%</span></td>
+                                    <td><code>15</code></td>
+                                    <td><code>CLIENT_RATE_LIMIT</code></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>4. DDOS_SIM</strong></td>
+                                    <td>35b × 8.5 r/s</td>
+                                    <td><code>298</code></td>
+                                    <td>26.8%</td>
+                                    <td><span class="status-pill pill-danger">73.2%</span></td>
+                                    <td><code>10</code></td>
+                                    <td><code>DDOS_BOT_DETECTED</code></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>5. UDP_SPOOF</strong></td>
+                                    <td>30b × 8.0 r/s</td>
+                                    <td><code>240</code></td>
+                                    <td>6.3%</td>
+                                    <td><span class="status-pill pill-danger">93.7%</span></td>
+                                    <td><code>5</code></td>
+                                    <td><code>UDP_SPOOF_DETECTED</code></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SLIDE 10: BENCHMARK 2 - DEFENSE ON VS OFF & LATENCY ==================== -->
+        <section class="slide" data-slide="10">
+            <div class="slide-inner">
+                <div class="slide-header">
+                    <div>
+                        <div class="eyebrow">09 / KẾT QUẢ THỰC NGHIỆM 2 (ĐỐI CHỨNG KHIÊN BẢO VỆ)</div>
+                        <h2 class="slide-h2">Hiệu quả Bảo vệ Khách hàng Thật (BẬT vs. TẮT Phòng thủ) & Độ trễ 60s</h2>
+                    </div>
+                    <span class="header-badge">Tải tấn công nền: DDoS 300 req/s</span>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card card-emerald">
+                        <div class="card-title">
+                            <span>🛡️ Trải nghiệm Khách hàng Thật trên Cổng NetShop (%)</span>
+                            <span class="status-pill pill-ok">+87.9% THÀNH CÔNG</span>
+                        </div>
+                        <div style="height: 225px; width: 100%; position: relative;">
+                            <canvas id="defenseCompareChart"></canvas>
+                        </div>
+                        <ul class="clean-list" style="font-size: 12px;">
+                            <li><strong>Khi TẮT Phòng thủ (<code>--no-defense</code>):</strong> Bot chiếm hết 6 khe <code>UNPROTECTED_WORKER_SLOTS</code> (trễ <code>120ms/req</code>). Khách hàng thật bị lỗi <strong><code>503 SERVER_OVERLOADED</code> tới 88.5%</strong>!</li>
+                            <li><strong>Khi BẬT <code>TrafficGuard</code>:</strong> 91.2% gói tin bot bị cắt tại biên trong <code>&lt; 0.05ms</code>; khách thật <code>web_visitor_01</code> mua hàng thành công <strong>99.4%</strong>!</li>
+                        </ul>
+                    </div>
+
+                    <div class="card card-rose">
+                        <div class="card-title">
+                            <span>⏱️ Biến thiên Độ trễ Phản hồi (Latency ms) theo Thời gian 60s</span>
+                            <span class="status-pill pill-info">1.4ms vs 238.5ms</span>
+                        </div>
+                        <div style="height: 225px; width: 100%; position: relative;">
+                            <canvas id="latencyLineChart"></canvas>
+                        </div>
+                        <ul class="clean-list" style="font-size: 12px;">
+                            <li><strong>Tâm bão DDoS ($t = 10\text{s} \rightarrow 45\text{s}$):</strong> Khi tắt phòng thủ (đường đỏ), độ trễ dựng đứng lên <strong><code>238.5 ms</code></strong> (gấp 170 lần).</li>
+                            <li>Khi bật <code>TrafficGuard</code> (đường xanh lá), độ trễ giữ phẳng <strong><code>1.4 – 3.6 ms</code></strong> suốt đợt tấn công nhờ cấu trúc <code>deque</code> $O(1)$.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SLIDE 11: BENCHMARK 3 - TCP VS UDP & BLOCK REASONS ==================== -->
+        <section class="slide" data-slide="11">
+            <div class="slide-inner">
+                <div class="slide-header">
+                    <div>
+                        <div class="eyebrow">10 / KẾT QUẢ THỰC NGHIỆM 3 (SO SÁNH GIAO THỨC & PHÂN BỔ LUẬT CHẶN)</div>
+                        <h2 class="slide-h2">Đo kiểm Hiệu năng TCP vs. UDP & Tỷ lệ Kích hoạt 6 Luật Phòng thủ</h2>
+                    </div>
+                    <span class="header-badge">Cùng cấu hình: 20 Clients × 5 req/s × 15s = 1.500 Requests</span>
+                </div>
+
+                <div class="grid-12">
+                    <div class="card col-7">
+                        <div class="card-title">
+                            <span>⚡ Bảng Đối chiếu Thực nghiệm TCP (<code>SOCK_STREAM</code>) và UDP (<code>SOCK_DGRAM</code>)</span>
+                        </div>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Chỉ số đo đạc (1.500 Requests)</th>
+                                    <th>TCP (<code>SOCK_STREAM</code>)</th>
+                                    <th>UDP (<code>SOCK_DGRAM</code>)</th>
+                                    <th>Chênh lệch</th>
+                                    <th>Giải thích nguyên nhân tầng Giao vận</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><strong>Độ trễ RTT phía Client</strong></td>
+                                    <td><code>2.85 ms</code></td>
+                                    <td><span class="status-pill pill-ok">0.92 ms</span></td>
+                                    <td>TCP chậm hơn <strong>3.10×</strong></td>
+                                    <td>TCP tốn 3-way handshake + đóng kết nối <code>FIN/ACK</code></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Thời gian xử lý tại Server</strong></td>
+                                    <td><code>0.48 ms</code></td>
+                                    <td><span class="status-pill pill-ok">0.19 ms</span></td>
+                                    <td>TCP tốn hơn <strong>2.52×</strong></td>
+                                    <td>TCP tạo luồng mới & đọc vòng lặp tìm <code>\n</code></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Số gói tin / Request</strong></td>
+                                    <td><code>8.0 gói</code></td>
+                                    <td><span class="status-pill pill-ok">2.0 gói</span></td>
+                                    <td>TCP nhiều hơn <strong>4.00×</strong></td>
+                                    <td>UDP chỉ 1 gói đi + 1 gói về; TCP tốn thêm 6 gói điều khiển</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Chi phí Header / Request</strong></td>
+                                    <td><code>312 Bytes</code></td>
+                                    <td><span class="status-pill pill-ok">56 Bytes</span></td>
+                                    <td>TCP nặng hơn <strong>5.57×</strong></td>
+                                    <td>Header UDP chỉ 8B so với TCP 20B×8 gói</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Chống Giả mạo IP (Anti-Spoof)</strong></td>
+                                    <td><span class="status-pill pill-ok">Tuyệt đối 100%</span></td>
+                                    <td><span class="status-pill pill-warn">Cần TrafficGuard</span></td>
+                                    <td>Ưu thế của TCP</td>
+                                    <td>Giả mạo IP không thể hoàn tất 3-way handshake</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="card col-5">
+                        <div class="card-title">
+                            <span>🎯 Phân bổ 6 Luật Chặn (10.000 gói tấn công)</span>
+                        </div>
+                        <div style="height: 215px; width: 100%; position: relative;">
+                            <canvas id="blockReasonsChart"></canvas>
+                        </div>
+                        <p class="card-body" style="font-size: 12px;">
+                            <strong>Phòng thủ chiều sâu (Defense-in-Depth):</strong> 3 lớp nhận diện thông minh đầu tiên (<code>DDOS_BOT</code> 38.4%, <code>CLIENT_LIMIT</code> 26.2%, <code>UDP_SPOOF</code> 18.5%) đã lọc bỏ <strong>83.1%</strong> lưu lượng độc hại trước khi chạm tới chốt chặn <code>GLOBAL_RATE_LIMIT</code> (4.1%).
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SLIDE 12: DUAL LIVE DEMO ==================== -->
+        <section class="slide" data-slide="12">
+            <div class="slide-inner">
+                <div class="slide-header">
+                    <div>
+                        <div class="eyebrow">11 / KỊCH BẢN TRÌNH DIỄN TRỰC TIẾP (LIVE DEMO)</div>
+                        <h2 class="slide-h2">Hệ sinh thái Demo Kép: NetGuard Lab (<code>:8080</code>) & TechStore Thực tế (<code>:5000</code>)</h2>
+                    </div>
+                    <span class="header-badge">Trực quan • Tương tác thời gian thực</span>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card card-blue">
+                        <div class="card-title">
+                            <span>🖥️ Demo 1: NetGuard Lab v2.0 & NetShop Portal</span>
+                            <span class="status-pill pill-info">PORT 8080 & 9000</span>
+                        </div>
+                        <pre class="code-block"><span class="cm"># Khởi chạy Web Control Surface (tích hợp cả TCP/UDP Server & Simulator):</span>
+cd D:\VScode\lapTrinhMang\network_dos_ddos_simulator
+python main.py web   <span class="cm"># Mở trình duyệt tại http://127.0.0.1:8080</span></pre>
+                        <ul class="clean-list" style="font-size: 12.8px;">
+                            <li><strong>Bước 1:</strong> Khởi động Server ở chế độ <code>BOTH</code> (chạy song song TCP & UDP trên cổng <code>9000</code>).</li>
+                            <li><strong>Bước 2:</strong> Chạy kịch bản <code>FLASH_CROWD</code> (35 clients) $\rightarrow$ quan sát hệ thống nhận diện xanh lá <code>Trust Score = 95/100</code>, phục vụ 100%.</li>
+                            <li><strong>Bước 3:</strong> Chuyển sang <code>DDOS_SIMULATION</code> hoặc <code>UDP_SPOOF</code> $\rightarrow$ bấm duyệt thử <strong>NetShop Portal</strong> ngay bên dưới: khi <strong>Bật phòng thủ</strong> trang trả về <code>200 OK (1–3ms)</code>; khi bấm <strong>Tắt phòng thủ</strong> lập tức báo đỏ <code>503 SERVER_OVERLOADED</code>!</li>
+                        </ul>
+                    </div>
+
+                    <div class="card card-emerald">
+                        <div class="card-title">
+                            <span>🛒 Demo 2: TechStore — Web Bán Hàng E-Commerce Thật</span>
+                            <span class="status-pill pill-ok">PORT 5000 • SQLITE WAF</span>
+                        </div>
+                        <pre class="code-block"><span class="cm"># Terminal 1: Chạy Web E-Commerce thật (SQLite + 8 Worker Threads)</span>
+cd D:\VScode\lapTrinhMang\real_ecommerce_shop
+python server.py     <span class="cm"># Mở http://127.0.0.1:5000</span>
+<span class="cm"># Terminal 2: Phát động tấn công Layer 7 (GET Flood / POST SHA-256 / Slowloris)</span>
+python attacker.py</pre>
+                        <ul class="clean-list" style="font-size: 12.8px;">
+                            <li><strong>Tính chân thực cao:</strong> CSDL <strong>SQLite (<code>shop.db</code>)</strong> lưu sản phẩm, giỏ hàng và tài khoản băm mật khẩu <strong>SHA-256</strong>, giới hạn <strong>8 Worker Threads</strong> giống môi trường sản xuất.</li>
+                            <li><strong>3 đòn tấn công thực tế:</strong> <code>[1] HTTP GET SQLite Search Flood</code>, <code>[2] HTTP POST Login SHA-256 CPU Flood</code>, <code>[3] Slowloris Socket Exhaustion</code>.</li>
+                            <li><strong>Hiệu ứng trực quan trên trình duyệt:</strong> Khi WAF tắt, nhấn F5 trên Chrome sẽ thấy <strong>vòng xoay tab xoay vô tận (Ping &gt; 3000ms)</strong>; ngay khi bật nút <strong>"Bật Phòng Thủ WAF"</strong>, trang tải lại mượt mà trong <strong><code>&lt; 20ms</code></strong>!</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SLIDE 13: INTERACTIVE Q&A BANK ==================== -->
+        <section class="slide" data-slide="13">
+            <div class="slide-inner">
+                <div class="slide-header">
+                    <div>
+                        <div class="eyebrow">12 / PHỤ LỤC HỖ TRỢ PHẢN BIỆN & BẢO VỆ ĐỒ ÁN</div>
+                        <h2 class="slide-h2">Ngân hàng Câu hỏi Vấn đáp Trọng tâm (Bấm lọc theo Chủ đề)</h2>
+                    </div>
+                    <div class="tab-bar">
+                        <button class="tab-btn active" onclick="filterQA('all', this)">Tất cả tiêu biểu</button>
+                        <button class="tab-btn" onclick="filterQA('socket', this)">Socket & TCP/UDP</button>
+                        <button class="tab-btn" onclick="filterQA('thread', this)">Đa luồng & Framing</button>
+                        <button class="tab-btn" onclick="filterQA('defense', this)">TrafficGuard & Bảo mật</button>
+                    </div>
+                </div>
+
+                <div class="qa-grid" id="qaContainer">
+                    <div class="qa-item" data-cat="socket">
+                        <div class="qa-q">Câu 4 & 5: Tại sao TCP Server có listen/accept còn UDP Server thì không?</div>
+                        <div class="qa-a">TCP (<code>SOCK_STREAM</code>) hướng kết nối nên cần <code>listen(128)</code> tạo hàng đợi và <code>accept()</code> lấy <code>client_socket</code> riêng sau bắt tay 3 bước. UDP (<code>SOCK_DGRAM</code>) phi kết nối nên 1 socket gọi thẳng <code>recvfrom()</code> và <code>sendto()</code>.</div>
+                    </div>
+                    <div class="qa-item" data-cat="thread">
+                        <div class="qa-q">Câu 6 & 18: Vì sao TCP Server phải đa luồng và dùng BoundedSemaphore(100)?</div>
+                        <div class="qa-a">Đa luồng giúp 1 client chậm không làm nghẽn vòng lặp <code>accept()</code>. <code>BoundedSemaphore(100)</code> giới hạn tối đa 100 kết nối đồng thời; kết nối thứ 101 nhận <code>SERVER_BUSY</code> ngay thay vì tạo thread vô hạn gây tràn RAM.</div>
+                    </div>
+                    <div class="qa-item" data-cat="defense">
+                        <div class="qa-q">Câu 10: Làm sao TrafficGuard phân biệt được Flash Crowd với DDoS?</div>
+                        <div class="qa-a">Nhờ phân tích hành vi trong <code>traffic_guard.py</code>: <code>Flash Crowd</code> có $\ge 8$ clients nhưng tốc độ cá nhân $\le 12\text{ r/s}$ (jitter 35%) và duyệt đa dạng $\ge 3$ đường dẫn khiến <code>dominant_path_ratio &lt; 0.75</code>. Ngược lại bot DDoS bắn dồn dập vào <code>/login</code> ($\ge 75\%$).</div>
+                    </div>
+                    <div class="qa-item" data-cat="socket">
+                        <div class="qa-q">Câu 11: Tại sao chế độ giả mạo IP (UDP_SPOOF) bị khóa trên giao thức TCP?</div>
+                        <div class="qa-a">Vì TCP bắt buộc bắt tay 3 bước (<code>SYN</code> → <code>SYN-ACK</code> → <code>ACK</code>). Nếu giả mạo IP nguồn, gói <code>SYN-ACK</code> của Server sẽ gửi tới IP giả chứ không quay về máy gửi, làm kết nối không thể thiết lập để gửi JSON.</div>
+                    </div>
+                    <div class="qa-item" data-cat="thread">
+                        <div class="qa-q">Câu 16 & 17: Vì TCP là luồng byte (Byte stream), Project tách bản tin JSON thế nào?</div>
+                        <div class="qa-a">Hàm <code>encode_json(..., tcp_framed=True)</code> nối ký tự <code>b"\n"</code> vào cuối mỗi bản tin JSON. Phía nhận, <code>receive_tcp_message()</code> đọc từng chunk cho tới khi gặp <code>b"\n"</code> (tối đa 4096B). Còn UDP bảo toàn biên Datagram nên không cần <code>\n</code>.</div>
+                    </div>
+                    <div class="qa-item" data-cat="defense">
+                        <div class="qa-q">Câu 12 & 19: RPS được tính thế nào và threading.Lock giải quyết vấn đề gì?</div>
+                        <div class="qa-a">RPS là số mốc thời gian <code>time.monotonic()</code> nằm trong <code>collections.deque</code> sau khi <code>popleft()</code> các mốc cũ hơn <code>now - 1.0s</code>. <code>threading.Lock</code> ngăn Race Condition khi hàng chục luồng TCP/UDP cùng cập nhật bộ đếm đồng thời.</div>
+                    </div>
+                    <div class="qa-item" data-cat="defense">
+                        <div class="qa-q">Câu 21: Vì sao Project từ chối địa chỉ 0.0.0.0 và IP Public?</div>
+                        <div class="qa-a">Bind <code>0.0.0.0</code> lắng nghe trên mọi card mạng dễ phơi bày dịch vụ ra mạng ngoài; còn chặn IP Public ở Client đảm bảo công cụ chỉ dùng trong phòng Lab (<code>127.0.0.0/8</code> và 3 dải <code>RFC1918</code>), tuyệt đối an toàn pháp lý và kỹ thuật.</div>
+                    </div>
+                    <div class="qa-item" data-cat="defense">
+                        <div class="qa-q">Câu 23: Cơ chế _prune_identity_maps() trong TrafficGuard dùng để làm gì?</div>
+                        <div class="qa-a">Khi bị tấn công <code>UDP_SPOOF</code> sinh ra hàng vạn IP và <code>client_id</code> giả mạo liên tục, nếu lưu mãi trong <code>dict</code> sẽ gây rò rỉ/tràn RAM. Khi số khóa vượt <code>1024</code>, hàm này tự động dọn sạch các khóa đã hết hạn cửa sổ 1–2 giây.</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SLIDE 14: CONCLUSION & FUTURE WORK ==================== -->
+        <section class="slide" data-slide="14">
+            <div class="slide-inner">
+                <div class="slide-header">
+                    <div>
+                        <div class="eyebrow">13 / TỔNG KẾT & ĐỊNH HƯỚNG PHÁT TRIỂN</div>
+                        <h2 class="slide-h2">Kết luận Đồ án & Hướng Mở rộng Tương lai</h2>
+                    </div>
+                    <span class="header-badge">VKU • Khoa Khoa học Máy tính</span>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card card-emerald">
+                        <div class="card-title">🏆 Giá trị Học thuật & Thực tiễn Đạt được</div>
+                        <ul class="clean-list">
+                            <li><strong>Nắm vững gốc rễ Lập trình mạng:</strong> Hiện thực hóa tường minh chu trình Socket TCP (<code>SOCK_STREAM</code>) và UDP (<code>SOCK_DGRAM</code>), kỹ thuật framing luồng byte và đóng gói thông điệp qua 7 tầng OSI.</li>
+                            <li><strong>Thiết kế OOAD chuẩn mực:</strong> Hoàn thiện đầy đủ các biểu đồ Use Case, Activity, Sequence, Class, State & Deployment bám sát phương pháp luận của <strong>PGS.TS. Huỳnh Công Pháp</strong>.</li>
+                            <li><strong>Giải quyết bài toán Flash Crowd vs. DDoS:</strong> Khiên <code>TrafficGuard</code> đạt độ chính xác 100% trên bộ kiểm thử, giữ độ trễ <code>&lt; 3.6 ms</code> và bảo vệ khách hàng thật đạt <strong>99.4%</strong>.</li>
+                        </ul>
+                    </div>
+
+                    <div class="card card-blue">
+                        <div class="card-title">🚀 5 Hướng Phát triển Tiếp theo</div>
+                        <ul class="clean-list">
+                            <li><strong>1. Kiến trúc Async I/O (<code>asyncio</code> / <code>epoll</code> / <code>IOCP</code>):</strong> Nâng sức chịu tải từ hàng trăm luồng lên mức <code>50.000 – 100.000</code> kết nối đồng thời (Bài toán C100K).</li>
+                            <li><strong>2. Tích hợp Machine Learning (Isolation Forest / LightGBM):</strong> Tự động học ngưỡng bất thường từ vector đặc trưng Entropy đường dẫn & Inter-Arrival Time.</li>
+                            <li><strong>3. Bảo mật Kênh truyền TLS 1.3 & QUIC (HTTP/3 trên UDP):</strong> Nghiên cứu chi phí mật mã học khi chống tấn công SSL Exhaustion DoS.</li>
+                            <li><strong>4. Điều phối Cụm Container (Docker / Kubernetes Lab):</strong> Kết hợp Linux <code>tc (Traffic Control)</code> để mô phỏng nghẽn băng thông vật lý đa node.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="card" style="text-align: center; padding: 22px; background: linear-gradient(135deg, rgba(6, 182, 212, 0.14), rgba(16, 185, 129, 0.14)); border-color: rgba(6, 182, 212, 0.4);">
+                    <h3 style="font-family: var(--font-heading); font-size: 24px; color: var(--text-primary); margin-bottom: 6px;">
+                        Em xin chân thành cảm ơn Thầy PGS.TS. Huỳnh Công Pháp và Hội đồng đã lắng nghe!
+                    </h3>
+                    <p style="color: var(--text-secondary); font-size: 14px;">
+                        Sinh viên thực hiện: <strong>Đặng Quốc Toàn (24ITB200)</strong> • Sẵn sàng thực hiện Live Demo & Trả lời câu hỏi vấn đáp.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Bottom Footer Controls -->
+    <footer class="deck-footer">
+        <div class="footer-info">
+            <span><strong>SV:</strong> Đặng Quốc Toàn (24ITB200)</span>
+            <span>•</span>
+            <span><strong>GVHD:</strong> PGS.TS. Huỳnh Công Pháp</span>
+            <span>•</span>
+            <span style="color: var(--accent-cyan);">Mẹo: Dùng phím <code>←</code> <code>→</code> hoặc <code>Space</code> để chuyển slide, <code>F</code> để phóng toàn màn hình</span>
+        </div>
+        <div class="nav-controls">
+            <button class="nav-btn" onclick="prevSlide()">← Trước</button>
+            <span class="slide-counter"><span id="currentSlideNum">01</span> / <span id="totalSlideNum">14</span></span>
+            <button class="nav-btn" onclick="nextSlide()">Tiếp →</button>
+        </div>
+    </footer>
+
+    <script>
+        let currentSlide = 1;
+        const slides = document.querySelectorAll('.slide');
+        const totalSlides = slides.length;
+        document.getElementById('totalSlideNum').textContent = String(totalSlides).padStart(2, '0');
+
+        let chartsInitialized = {
+            slide9: false,
+            slide10: false,
+            slide11: false
+        };
+
+        function showSlide(n) {
+            if (n < 1) n = 1;
+            if (n > totalSlides) n = totalSlides;
+            currentSlide = n;
+
+            slides.forEach((s, idx) => {
+                s.classList.toggle('active', idx === currentSlide - 1);
+            });
+
+            document.getElementById('currentSlideNum').textContent = String(currentSlide).padStart(2, '0');
+            document.getElementById('progressBar').style.width = ((currentSlide / totalSlides) * 100) + '%';
+            document.getElementById('slideSelect').value = String(currentSlide);
+
+            // Lazy-init Chart.js charts when the slide becomes visible
+            if (currentSlide === 9 && !chartsInitialized.slide9) {
+                initSlide9Chart();
+                chartsInitialized.slide9 = true;
+            }
+            if (currentSlide === 10 && !chartsInitialized.slide10) {
+                initSlide10Charts();
+                chartsInitialized.slide10 = true;
+            }
+            if (currentSlide === 11 && !chartsInitialized.slide11) {
+                initSlide11Chart();
+                chartsInitialized.slide11 = true;
+            }
+        }
+
+        function nextSlide() { showSlide(currentSlide + 1); }
+        function prevSlide() { showSlide(currentSlide - 1); }
+
+        document.addEventListener('keydown', (e) => {
+            if (document.getElementById('lightbox').classList.contains('open')) {
+                if (e.key === 'Escape') closeLightbox();
+                return;
+            }
+            if (e.key === 'ArrowRight' || e.key === ' ') {
+                e.preventDefault();
+                nextSlide();
+            } else if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                prevSlide();
+            } else if (e.key === 'f' || e.key === 'F') {
+                toggleFullScreen();
+            }
+        });
+
+        function toggleFullScreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+                document.exitFullscreen().catch(() => {});
+            }
+        }
+
+        // Lightbox
+        function openLightbox(src, caption) {
+            document.getElementById('lightboxImg').src = src;
+            document.getElementById('lightboxCaption').textContent = caption || '';
+            document.getElementById('lightbox').classList.add('open');
+        }
+
+        function closeLightbox() {
+            document.getElementById('lightbox').classList.remove('open');
+        }
+
+        // Tabs on Slide 4 (OSI)
+        function switchOsiTab(tabId, btn) {
+            document.getElementById('osiTab-osi7').style.display = tabId === 'osi7' ? 'flex' : 'none';
+            document.getElementById('osiTab-mapping').style.display = tabId === 'mapping' ? 'flex' : 'none';
+            btn.parentElement.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+
+        // Tabs on Slide 6 (UML)
+        function switchUmlTab(tabId, btn) {
+            ['usecase', 'activity', 'sequence', 'class'].forEach(id => {
+                document.getElementById('umlTab-' + id).style.display = (id === tabId) ? 'flex' : 'none';
+            });
+            btn.parentElement.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+
+        // Filter Q&A on Slide 13
+        function filterQA(cat, btn) {
+            document.querySelectorAll('#qaContainer .qa-item').forEach(item => {
+                if (cat === 'all' || item.getAttribute('data-cat') === cat) {
+                    item.style.display = 'block';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+            btn.parentElement.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+
+        // Chart.js Common Options
+        Chart.defaults.color = '#94A3B8';
+        Chart.defaults.font.family = "'Inter', sans-serif";
+
+        function initSlide9Chart() {
+            const ctx = document.getElementById('rpsChart');
+            if (!ctx) return;
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['1. NORMAL', '2. FLASH_CROWD', '3. DOS_SIM', '4. DDOS_SIM', '5. UDP_SPOOF'],
+                    datasets: [
+                        {
+                            label: 'Phục vụ Thành công (200 OK - RPS)',
+                            data: [8, 158, 40, 80, 15],
+                            backgroundColor: 'rgba(16, 185, 129, 0.85)',
+                            borderColor: '#10B981',
+                            borderWidth: 1,
+                            borderRadius: 5
+                        },
+                        {
+                            label: 'Chặn Độc hại (429 Blocked - RPS)',
+                            data: [0, 0, 120, 218, 225],
+                            backgroundColor: 'rgba(244, 63, 94, 0.85)',
+                            borderColor: '#F43F5E',
+                            borderWidth: 1,
+                            borderRadius: 5
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'top', labels: { color: '#E2E8F0', font: { size: 11 } } }
+                    },
+                    scales: {
+                        x: { stacked: true, grid: { color: 'rgba(148,163,184,0.08)' } },
+                        y: { stacked: true, grid: { color: 'rgba(148,163,184,0.08)' }, title: { display: true, text: 'Requests / Second (RPS)' } }
+                    }
+                }
+            });
+        }
+
+        function initSlide10Charts() {
+            const ctx1 = document.getElementById('defenseCompareChart');
+            if (ctx1) {
+                new Chart(ctx1, {
+                    type: 'bar',
+                    data: {
+                        labels: ['Khách thật 200 OK (%)', 'Lỗi 503 Quá tải (%)', 'Tỷ lệ Chặn Bot (%)', 'Độ sẵn sàng NetShop (%)'],
+                        datasets: [
+                            {
+                                label: 'TẮT Phòng thủ (--no-defense)',
+                                data: [11.5, 88.5, 0.0, 12.0],
+                                backgroundColor: 'rgba(244, 63, 94, 0.8)',
+                                borderRadius: 5
+                            },
+                            {
+                                label: 'BẬT Phòng thủ (TrafficGuard = ON)',
+                                data: [99.4, 0.0, 91.2, 99.8],
+                                backgroundColor: 'rgba(16, 185, 129, 0.85)',
+                                borderRadius: 5
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'top', labels: { color: '#E2E8F0', font: { size: 11 } } }
+                        },
+                        scales: {
+                            x: { grid: { color: 'rgba(148,163,184,0.08)' } },
+                            y: { max: 105, grid: { color: 'rgba(148,163,184,0.08)' } }
+                        }
+                    }
+                });
+            }
+
+            const ctx2 = document.getElementById('latencyLineChart');
+            if (ctx2) {
+                new Chart(ctx2, {
+                    type: 'line',
+                    data: {
+                        labels: ['0s', '5s', '10s (Bắt đầu)', '15s', '25s', '35s', '45s (Dừng)', '50s', '60s'],
+                        datasets: [
+                            {
+                                label: 'Tắt Phòng thủ (DDoS 300 RPS)',
+                                data: [1.4, 1.5, 45.0, 210.0, 238.5, 235.0, 190.0, 18.0, 1.5],
+                                borderColor: '#F43F5E',
+                                backgroundColor: 'rgba(244, 63, 94, 0.15)',
+                                borderWidth: 2.5,
+                                fill: true,
+                                tension: 0.35
+                            },
+                            {
+                                label: 'Flash Crowd (35 Khách thật)',
+                                data: [1.3, 1.4, 4.8, 6.2, 6.8, 6.4, 5.1, 1.6, 1.4],
+                                borderColor: '#F59E0B',
+                                borderWidth: 2,
+                                tension: 0.35
+                            },
+                            {
+                                label: 'Bật TrafficGuard (DDoS 300 RPS)',
+                                data: [1.3, 1.4, 2.5, 3.2, 3.6, 3.4, 2.8, 1.5, 1.3],
+                                borderColor: '#10B981',
+                                borderWidth: 2.5,
+                                tension: 0.35
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'top', labels: { color: '#E2E8F0', font: { size: 11 } } }
+                        },
+                        scales: {
+                            x: { grid: { color: 'rgba(148,163,184,0.08)' } },
+                            y: { grid: { color: 'rgba(148,163,184,0.08)' }, title: { display: true, text: 'Latency (ms)' } }
+                        }
+                    }
+                });
+            }
+        }
+
+        function initSlide11Chart() {
+            const ctx = document.getElementById('blockReasonsChart');
+            if (!ctx) return;
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: [
+                        'DDOS_BOT_DETECTED (38.4%)',
+                        'CLIENT_RATE_LIMIT (26.2%)',
+                        'UDP_SPOOF_DETECTED (18.5%)',
+                        'SOURCE_RATE_LIMIT (11.3%)',
+                        'GLOBAL_RATE_LIMIT (4.1%)',
+                        'SERVER_BUSY (1.5%)'
+                    ],
+                    datasets: [{
+                        data: [38.4, 26.2, 18.5, 11.3, 4.1, 1.5],
+                        backgroundColor: [
+                            '#F43F5E',
+                            '#F59E0B',
+                            '#8B5CF6',
+                            '#06B6D4',
+                            '#3B82F6',
+                            '#64748B'
+                        ],
+                        borderWidth: 1,
+                        borderColor: '#0D1526'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: { color: '#E2E8F0', font: { size: 10.5 }, boxWidth: 12 }
+                        }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>

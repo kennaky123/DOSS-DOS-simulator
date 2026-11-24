@@ -33,7 +33,7 @@ class WebControllerTests(unittest.TestCase):
             controller.start_simulation(
                 {
                     "host": "127.0.0.1",
-                    "port": 9000,
+                    "port": 5000,
                     "protocol": "TCP",
                     "mode": "NORMAL",
                     "clients": 6,
@@ -57,19 +57,6 @@ class WebControllerTests(unittest.TestCase):
         self.assertFalse(controller.status()["server"]["defenseEnabled"])
         controller.set_defense({"enabled": True})
         self.assertTrue(controller.status()["server"]["defenseEnabled"])
-
-    def test_live_service_portal_returns_catalog_when_server_online(self) -> None:
-        controller = WebController()
-        controller.start_server({"host": "127.0.0.1", "port": 19129, "protocol": "TCP"})
-        try:
-            res = controller.call_service(
-                {"host": "127.0.0.1", "port": 19129, "path": "/products"}
-            )
-            self.assertTrue(res["ok"])
-            self.assertEqual(res["httpStatus"], 200)
-            self.assertIn("items", res["response"]["service"])
-        finally:
-            controller.shutdown()
 
 
 if __name__ == "__main__":

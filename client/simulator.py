@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 from client.tcp_client import TcpClient
 from client.udp_client import UdpClient
+from client.slow_headers_client import SlowHeadersClient
+from client.http_lab_client import HttpLabClient
 from common import config
 from common.network_utils import validate_lab_address, validate_port
 
@@ -111,6 +113,7 @@ class TrafficSimulator:
         duration_seconds: int,
         *,
         ip_mode: str | None = None,
+        slow_header_interval_seconds: float = 5.0,
     ) -> None:
         self.host = validate_lab_address(host)
         self.port = validate_port(port)
@@ -119,14 +122,44 @@ class TrafficSimulator:
         self.logical_clients = logical_clients
         self.request_rate = request_rate
         self.duration_seconds = duration_seconds
+        self.slow_header_interval_seconds = slow_header_interval_seconds
         default_ip_mode = "SINGLE_IP" if mode == "DOS_SIMULATION" else "MULTI_IP"
         chosen_ip_mode = (ip_mode or default_ip_mode).upper()
         if chosen_ip_mode not in config.IP_MODES:
             chosen_ip_mode = default_ip_mode
-        if self.protocol == "TCP" and chosen_ip_mode == "UDP_SPOOF":
+        if self.mode == "DOS_SIMULATION":
+            # DoS chỉ dùng 1 IP nguồn duy nhất.
+            chosen_ip_mode = "SINGLE_IP"
+        elif self.protocol == "TCP" and chosen_ip_mode == "UDP_SPOOF":
             # TCP cần bắt tay 3 bước nên tự động chuyển về MULTI_IP.
             chosen_ip_mode = "MULTI_IP"
         self.ip_mode = chosen_ip_mode
+        if self.protocol == "SLOW_HEADERS":
+            if self.host not in ("localhost", "127.0.0.1") and not self.host.startswith("127."):
+                raise ValueError("SLOW_HEADERS chỉ được phép chạy trên loopback.")
+            if logical_clients > config.MAX_SLOW_HEADER_CLIENTS:
+                raise ValueError(
+                    f"SLOW_HEADERS chỉ cho phép tối đa {config.MAX_SLOW_HEADER_CLIENTS} kết nối."
+                )
+            if duration_seconds > config.MAX_SLOW_HEADER_DURATION:
+                raise ValueError(
+                    f"SLOW_HEADERS chỉ cho phép tối đa {config.MAX_SLOW_HEADER_DURATION} giây."
+                )
+            if not config.MIN_SLOW_HEADER_INTERVAL <= slow_header_interval_seconds <= config.MAX_SLOW_HEADER_INTERVAL:
+                raise ValueError(
+                    f"Khoảng cách header phải từ {config.MIN_SLOW_HEADER_INTERVAL} đến {config.MAX_SLOW_HEADER_INTERVAL} giây."
+                )
+            self.ip_mode = "SINGLE_IP"
+        if self.protocol in ("HTTP_GET_SEARCH", "HTTP_POST_LOGIN"):
+            if self.host not in ("localhost", "127.0.0.1") and not self.host.startswith("127."):
+                raise ValueError("HTTP lab scenarios chỉ được phép chạy trên loopback.")
+            if logical_clients > config.MAX_HTTP_LAB_CLIENTS:
+                raise ValueError(f"HTTP lab chỉ cho phép tối đa {config.MAX_HTTP_LAB_CLIENTS} clients.")
+            if request_rate > config.MAX_HTTP_LAB_RATE:
+                raise ValueError(f"HTTP lab chỉ cho phép tối đa {config.MAX_HTTP_LAB_RATE:g} req/s/client.")
+            if duration_seconds > config.MAX_HTTP_LAB_DURATION:
+                raise ValueError(f"HTTP lab chỉ cho phép tối đa {config.MAX_HTTP_LAB_DURATION} giây.")
+            self.ip_mode = "SINGLE_IP"
         self.metrics = ClientMetrics()
         self.stop_event = threading.Event()
 
@@ -163,6 +196,25 @@ class TrafficSimulator:
         return snapshot
 
     def _worker(self, number: int, deadline: float) -> None:
+        if self.protocol == "SLOW_HEADERS":
+            client = SlowHeadersClient(self.host, self.port)
+            success, latency = client.run_once(
+                f"client-{number:02d}",
+                hold_seconds=self.duration_seconds,
+                header_interval_seconds=self.slow_header_interval_seconds,
+                stop_event=self.stop_event,
+            )
+            self.metrics.record(success, latency)
+            return
+
+        if self.protocol in ("HTTP_GET_SEARCH", "HTTP_POST_LOGIN"):
+            transport = HttpLabClient(self.host, self.port)
+            pacer = WorkerPacer(self.request_rate)
+            while pacer.wait(self.stop_event, deadline):
+                success, latency = transport.send(self.protocol, f"client-{number:02d}")
+                self.metrics.record(success, latency)
+            return
+
         transport = TcpClient(self.host, self.port) if self.protocol == "TCP" else UdpClient(
             self.host, self.port
         )

@@ -41,7 +41,7 @@ async function loadProducts(category = "all") {
     renderProducts(allProducts);
   } catch (err) {
     grid.innerHTML = `<div style="grid-column: 1/-1; text-align: center; color: #ef4444; padding: 40px;">
-      <h3>⚠️ Server đang bị DDoS chiếm trọn luồng xử lý!</h3>
+      <h3>Server đang bị DDoS chiếm trọn luồng xử lý!</h3>
       <p>Yêu cầu truy vấn SQLite bị tắc nghẽn (${err.message})</p>
     </div>`;
     countLabel.textContent = "Lỗi kết nối";
@@ -59,7 +59,7 @@ function renderProducts(products) {
   grid.innerHTML = products.map(p => `
     <article class="product-card">
       <div class="product-card-top">
-        <span>${p.image_icon}</span>
+        <span style="font-size:0.85rem;font-weight:700;color:#64748b;letter-spacing:0.08em;">SKU-0${p.id}</span>
         <span class="card-category-badge">${p.category}</span>
       </div>
       <div class="product-card-body">
@@ -70,7 +70,7 @@ function renderProducts(products) {
           <span class="product-stock" id="stock-${p.id}">Kho: <b>${p.stock}</b></span>
         </div>
         <button class="btn-add-cart" id="btn-add-${p.id}" onclick="addToCart(${p.id}, this)">
-          ${p.stock > 0 ? '🛒 Thêm vào giỏ' : '❌ Hết hàng'}
+          ${p.stock > 0 ? 'Thêm vào giỏ' : 'Hết hàng'}
         </button>
       </div>
     </article>
@@ -100,7 +100,7 @@ async function searchProducts(keyword) {
     grid.innerHTML = products.map(p => `
       <article class="product-card">
         <div class="product-card-top">
-          <span>${p.image_icon}</span>
+          <span style="font-size:0.85rem;font-weight:700;color:#64748b;letter-spacing:0.08em;">SKU-0${p.id}</span>
           <span class="card-category-badge">${p.category}</span>
         </div>
         <div class="product-card-body">
@@ -110,7 +110,7 @@ async function searchProducts(keyword) {
             <span class="product-price">${formatVND(p.price)}</span>
             <span class="product-stock">Kho: ${p.stock}</span>
           </div>
-          <button class="btn-add-cart" onclick="addToCart(${p.id})">🛒 Thêm vào giỏ</button>
+          <button class="btn-add-cart" onclick="addToCart(${p.id})">Thêm vào giỏ</button>
         </div>
       </article>
     `).join("");
@@ -137,7 +137,6 @@ async function checkAuthStatus() {
       currentUser = null;
       authSection.innerHTML = `
         <button class="btn-auth" id="openAuthModalBtn" onclick="openAuthModal()">
-          <span class="icon">👤</span>
           <span>Đăng nhập / Đăng ký</span>
         </button>
       `;
@@ -224,9 +223,9 @@ async function loadCart() {
 }
 
 async function addToCart(productId, btnElement) {
-  const origText = btnElement ? btnElement.innerHTML : "🛒 Thêm vào giỏ";
+  const origText = btnElement ? btnElement.innerHTML : "Thêm vào giỏ";
   if (btnElement) {
-    btnElement.innerHTML = "Đang lưu kho... ⏳";
+    btnElement.innerHTML = "Đang lưu kho...";
     btnElement.disabled = true;
   }
 
@@ -245,7 +244,7 @@ async function addToCart(productId, btnElement) {
       showToast(data.message || "Không thể thêm sản phẩm!", "error");
     }
   } catch (err) {
-    showToast("⚠️ Thao tác bị đơ / chậm: Server đang bị DoS quá tải!", "error");
+    showToast("Thao tác bị đơ / chậm: Server đang bị DoS quá tải!", "error");
   } finally {
     if (btnElement) {
       btnElement.innerHTML = origText;
@@ -277,7 +276,7 @@ async function checkout(btnElement) {
   
   const origText = btnElement ? btnElement.innerHTML : "Tiến hành đặt hàng";
   if (btnElement) {
-    btnElement.innerHTML = "Đang trừ kho SQLite... ⏳";
+    btnElement.innerHTML = "Đang trừ kho SQLite...";
     btnElement.disabled = true;
   }
 
@@ -298,7 +297,7 @@ async function checkout(btnElement) {
       showToast(data.message || "Đặt hàng thất bại!", "error");
     }
   } catch (err) {
-    showToast("⚠️ Giao dịch bị nghẽn: Server không kịp trừ kho SQLite do DDoS!", "error");
+    showToast("Giao dịch bị nghẽn: Server không kịp trừ kho SQLite do DDoS!", "error");
   } finally {
     if (btnElement) {
       btnElement.innerHTML = origText;
@@ -329,7 +328,7 @@ function renderCartUI(totalPrice = 0, totalCount = 0) {
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
         <span class="cart-item-price">${formatVND(item.price * item.quantity)}</span>
-        <button style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:1rem;" title="Xóa" onclick="removeFromCart(${item.product_id})">🗑️</button>
+        <button style="background:none; border:1px solid #fecaca; border-radius:4px; padding:2px 8px; color:#ef4444; cursor:pointer; font-size:0.78rem; font-weight:600;" title="Xóa" onclick="removeFromCart(${item.product_id})">Xóa</button>
       </div>
     </div>
   `).join("");
@@ -389,8 +388,9 @@ function startServerMonitoring() {
         document.getElementById("totalReqStats").textContent = data.total_requests;
         document.getElementById("blockedReqStats").textContent = data.blocked_requests;
         if (document.getElementById("cpuStats")) {
-          document.getElementById("cpuStats").textContent = data.cpu_load || "1%";
-          document.getElementById("cpuStats").style.color = data.cpu_load?.includes("100%") ? "#ef4444" : "#f59e0b";
+          document.getElementById("cpuStats").textContent = data.cpu_load || "0.0%";
+          const cpuVal = parseFloat(data.cpu_load) || 0;
+          document.getElementById("cpuStats").style.color = (data.worker_utilization_pct >= 75 || cpuVal >= 60) ? "#ef4444" : "#f59e0b";
         }
         if (document.getElementById("ramStats")) {
           document.getElementById("ramStats").textContent = `${data.ram_consumed_mb || 0} MB`;
