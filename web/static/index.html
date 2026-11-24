@@ -78,6 +78,12 @@
             <button type="button" class="ghost" onclick="selectHttpLabScenario('HTTP_POST_LOGIN')">HTTP POST Login</button>
           </div>
           <div class="http-lab-options" id="httpLabOptions" hidden>Local lab only · tối đa 20 clients · 10 req/s/client · 30 giây</div>
+          <div class="scenario-parameter-options" id="getSearchOptions" hidden>
+            <label><span>Search keyword</span><input name="search_keyword" value="laptop" maxlength="32"></label>
+          </div>
+          <div class="scenario-parameter-options" id="postLoginOptions" hidden>
+            <label><span>Login username prefix</span><input name="login_username_prefix" value="lab_user" maxlength="24"></label>
+          </div>
           <div class="slow-header-options" id="slowHeadersOptions" hidden>
             <label><span>Header interval (s)</span><input name="slow_header_interval" type="number" value="5" min="1" max="10" step="1"></label>
             <small>Khoảng cách gửi từng header nhỏ giọt · 1–10 giây</small>

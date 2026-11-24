@@ -16,9 +16,9 @@ def get_connection():
 
 
 def hash_password(password: str) -> str:
-    """Băm mật khẩu bằng PBKDF2-HMAC-SHA256 (250.000 vòng chuẩn thực tế)."""
+    """Băm mật khẩu bằng PBKDF2-HMAC-SHA256 (500.000 vòng chuẩn thực tế)."""
     salt = b"techstore_secure_salt_2026"
-    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 250_000).hex()
+    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 500_000).hex()
 
 
 def init_db():
@@ -63,6 +63,25 @@ def init_db():
         )
     """)
 
+    # Bảng nhật ký đăng nhập thực tế (audit log)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS login_audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            success INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Bảng thông số kỹ thuật chi tiết sản phẩm (dữ liệu thật cho tìm kiếm quan hệ)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS product_specs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL,
+            spec_text TEXT NOT NULL
+        )
+    """)
+
     # Kiểm tra xem đã có sản phẩm chưa, nếu chưa thì seed 8 sản phẩm mẫu
     cursor.execute("SELECT COUNT(*) as count FROM products")
     if cursor.fetchone()["count"] == 0:
@@ -80,6 +99,24 @@ def init_db():
             INSERT INTO products (name, category, price, stock, image_icon, description)
             VALUES (?, ?, ?, ?, ?, ?)
         """, sample_products)
+
+    # Seed 24.000 dòng thông số chi tiết (3.000 dòng/sản phẩm) để tìm kiếm trên dữ liệu thật
+    cursor.execute("SELECT COUNT(*) as count FROM product_specs")
+    if cursor.fetchone()["count"] == 0:
+        cursor.execute("SELECT id, name, category FROM products ORDER BY id")
+        prod_rows = cursor.fetchall()
+        spec_rows = [
+            (
+                p["id"],
+                f"{p['name']} | {p['category']} | Benchmark & Serial Spec #{i:04d} | Chính hãng TechStore 2026",
+            )
+            for p in prod_rows
+            for i in range(1, 3001)
+        ]
+        cursor.executemany(
+            "INSERT INTO product_specs (product_id, spec_text) VALUES (?, ?)",
+            spec_rows,
+        )
 
     # Thêm 1 tài khoản mẫu admin nếu chưa có và đồng bộ hash PBKDF2
     cursor.execute("SELECT COUNT(*) as count FROM users WHERE username = 'admin'")

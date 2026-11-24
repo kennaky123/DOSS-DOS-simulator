@@ -5,3 +5,4 @@
 .slow-header-button span{color:#8290a5;font-size:9px;font-weight:400}
 .slow-header-options{display:grid;grid-template-columns:1fr auto;align-items:end;gap:12px;padding:12px;border:1px solid rgba(32,227,210,.25);border-radius:10px;background:rgba(32,227,210,.04)}.slow-header-options small{color:#8290a5;font-size:10px;padding-bottom:12px}
 .lab-scenario-buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px}.lab-scenario-buttons button{padding:9px;color:#c7baff;border-color:rgba(141,104,255,.4)}.http-lab-options{padding:10px 12px;border-left:2px solid var(--violet);background:rgba(141,104,255,.06);color:#9e94c6;font:10px ui-monospace,monospace}
+.scenario-parameter-options{padding:12px;border:1px solid rgba(141,104,255,.25);border-radius:10px;background:rgba(141,104,255,.04)}

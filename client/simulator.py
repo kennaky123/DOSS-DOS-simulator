@@ -114,6 +114,8 @@ class TrafficSimulator:
         *,
         ip_mode: str | None = None,
         slow_header_interval_seconds: float = 5.0,
+        search_keyword: str = "laptop",
+        login_username_prefix: str = "lab_user",
     ) -> None:
         self.host = validate_lab_address(host)
         self.port = validate_port(port)
@@ -123,6 +125,8 @@ class TrafficSimulator:
         self.request_rate = request_rate
         self.duration_seconds = duration_seconds
         self.slow_header_interval_seconds = slow_header_interval_seconds
+        self.search_keyword = search_keyword[:32] or "laptop"
+        self.login_username_prefix = login_username_prefix[:24] or "lab_user"
         default_ip_mode = "SINGLE_IP" if mode == "DOS_SIMULATION" else "MULTI_IP"
         chosen_ip_mode = (ip_mode or default_ip_mode).upper()
         if chosen_ip_mode not in config.IP_MODES:
@@ -211,7 +215,12 @@ class TrafficSimulator:
             transport = HttpLabClient(self.host, self.port)
             pacer = WorkerPacer(self.request_rate)
             while pacer.wait(self.stop_event, deadline):
-                success, latency = transport.send(self.protocol, f"client-{number:02d}")
+                success, latency = transport.send(
+                    self.protocol,
+                    f"client-{number:02d}",
+                    search_keyword=self.search_keyword,
+                    login_username_prefix=self.login_username_prefix,
+                )
                 self.metrics.record(success, latency)
             return
 

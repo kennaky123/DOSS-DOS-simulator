@@ -143,6 +143,8 @@ function syncIpMode(notify = false) {
 
   const isHttpLab = protocol === 'HTTP_GET_SEARCH' || protocol === 'HTTP_POST_LOGIN';
   $('httpLabOptions').hidden = !isHttpLab;
+  $('getSearchOptions').hidden = protocol !== 'HTTP_GET_SEARCH';
+  $('postLoginOptions').hidden = protocol !== 'HTTP_POST_LOGIN';
   if (isHttpLab) {
     $('slowHeadersOptions').hidden = true;
     ipModeSelect.value = 'SINGLE_IP';
@@ -161,6 +163,9 @@ function syncIpMode(notify = false) {
 
   ipModeSelect.disabled = false;
   $('slowHeadersOptions').hidden = true;
+  $('httpLabOptions').hidden = true;
+  $('getSearchOptions').hidden = true;
+  $('postLoginOptions').hidden = true;
   simulationForm.elements.rate.max = 50;
   simulationForm.elements.duration.max = 300;
   simulationForm.elements.clients.max = 100;
@@ -238,6 +243,8 @@ window.runSlowHeadersEcommerce = function() {
   simulationForm.elements.clients.value = 2;
   simulationForm.elements.rate.value = 1;
   simulationForm.elements.duration.value = 20;
+  simulationForm.elements.search_keyword.value = 'laptop';
+  simulationForm.elements.login_username_prefix.value = 'lab_user';
   simulationForm.elements.slow_header_interval.value = 5;
   syncIpMode(false);
   toast('Đã chọn SLOW_HEADERS cho Web E-commerce. Kiểm tra tham số rồi nhấn “Chạy mô phỏng”.');
@@ -248,9 +255,9 @@ window.selectHttpLabScenario = function(protocol) {
   $('mode').value = 'NORMAL';
   simulationForm.elements.host.value = '127.0.0.1';
   simulationForm.elements.port.value = 5000;
-  simulationForm.elements.clients.value = 4;
-  simulationForm.elements.rate.value = 2;
-  simulationForm.elements.duration.value = 15;
+  simulationForm.elements.clients.value = 12;
+  simulationForm.elements.rate.value = 6;
+  simulationForm.elements.duration.value = 20;
   syncIpMode(false);
   toast(`${protocol === 'HTTP_GET_SEARCH' ? 'Database Search GET' : 'HTTP POST Login'} đã sẵn sàng. Nhấn “Chạy mô phỏng” để bắt đầu.`);
 };

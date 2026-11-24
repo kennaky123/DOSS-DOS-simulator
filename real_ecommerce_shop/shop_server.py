@@ -40,13 +40,14 @@ STATIC_DIR = BASE_DIR / "static"
 # Cấu hình Web Server (Micro-VPS thực tế: tài nguyên thấp)
 HOST = "0.0.0.0"             # Lắng nghe trên mọi card mạng (cho phép máy khác trong LAN truy cập)
 PORT = 5000
-WORKER_THREADS = 4           # 4 luồng xử lý đồng thời (tương đương VPS 2-4 core cấu hình thấp)
-MAX_QUEUE_BACKLOG = 16       # Hàng đợi socket nhỏ gọn
+WORKER_THREADS = 2           # 2 luồng xử lý đồng thời (tương đương micro-instance 1 vCPU)
+MAX_QUEUE_BACKLOG = 8        # Hàng đợi socket nhỏ gọn
 RATE_LIMIT_PER_SEC = 10      # Ngưỡng chặn DDoS: tối đa 10 request/giây/IP
 RATE_WINDOW_SEC = 2.0
 
 # Trạng thái phòng thủ và giám sát (Thread-Safe)
 state_lock = threading.Lock()
+db_lock = threading.Lock()
 defense_enabled = False      # Mặc định tắt phòng thủ để kiểm tra hiệu ứng lag/xoay vòng
 total_requests = 0
 blocked_requests = 0
@@ -55,15 +56,9 @@ active_workers = 0
 # Rate limiter tracking: IP -> deque([timestamp])
 ip_request_history: dict[str, collections.deque] = collections.defaultdict(collections.deque)
 sessions: dict[str, dict] = {}  # session_token -> user_data
-ram_stress_buffers: collections.deque[bytearray] = collections.deque(maxlen=400)
-_active_query_buffers: collections.deque[list] = collections.deque(maxlen=40)
-db_search_lock = threading.Lock()
-slowloris_active_conns = 0
-last_login_hash_stress_at = 0.0
-last_db_search_stress_at = 0.0
-last_general_flood_at = 0.0
 
-_last_cpu_time = time.process_time()
+_worker_cpu_seconds_total = 0.0
+_last_cpu_time = 0.0
 _last_wall_time = time.monotonic()
 _measured_cpu_pct = 0.0
 
@@ -71,7 +66,7 @@ _measured_cpu_pct = 0.0
 HEADER_READ_TIMEOUT_SEC = 1.5       # Tổng thời gian tối đa để gửi trọn vẹn HTTP header (\r\n\r\n)
 MAX_HEADER_BYTES_WAF = 8192         # Giới hạn dung lượng HTTP header tối đa (8 KB)
 MAX_HEADER_LINES_WAF = 40           # Giới hạn số dòng HTTP header tối đa
-MAX_CONCURRENT_CONNS_PER_IP = 3     # Giới hạn kết nối mở đồng thời tối đa trên mỗi IP
+MAX_CONCURRENT_CONNS_PER_IP = 2     # Giới hạn kết nối mở đồng thời tối đa trên mỗi IP
 active_ip_connections: dict[str, int] = collections.defaultdict(int)
 
 # Database Search GET Flood & Asymmetric POST Login Flood Defense (khi bật WAF)
@@ -163,45 +158,20 @@ def build_js_challenge_html(client_ip: str, next_path: str) -> bytes:
 
 
 def sample_real_telemetry() -> tuple[float, float]:
-    """Đo % CPU thật (time.process_time) và RAM thật (tracemalloc) của tiến trình Python."""
+    """Đo % CPU thật của riêng các worker server (time.thread_time) và RAM thật (tracemalloc)."""
     global _last_cpu_time, _last_wall_time, _measured_cpu_pct
-    now_cpu = time.process_time()
+    now_cpu = _worker_cpu_seconds_total
     now_wall = time.monotonic()
     dt_wall = now_wall - _last_wall_time
     if dt_wall >= 0.4:
         dt_cpu = max(0.0, now_cpu - _last_cpu_time)
-        # Quy đổi % trên 1 core xử lý của tiến trình server
+        # Quy đổi % trên 1 core xử lý của riêng server web (không tính luồng simulator)
         _measured_cpu_pct = min(100.0, round((dt_cpu / dt_wall) * 100.0, 1))
         _last_cpu_time = now_cpu
         _last_wall_time = now_wall
     current_bytes, _ = tracemalloc.get_traced_memory()
     ram_mb = round(current_bytes / (1024 * 1024), 2)
     return _measured_cpu_pct, ram_mb
-
-
-def apply_dos_workload(current_defense: bool, is_bot: bool = False, attack_type: str = "GENERAL"):
-    """Không dùng time.sleep hay fake RAM: dùng xử lý mật mã học & truy vấn SQLite thật."""
-    global last_login_hash_stress_at, last_db_search_stress_at, last_general_flood_at
-    if not current_defense:
-        if attack_type == "POST_LOGIN":
-            # handle_api_login sẽ chạy PBKDF2-HMAC-SHA256 250.000 vòng thật
-            with state_lock:
-                _active_query_buffers.clear()
-                ram_stress_buffers.clear()
-                last_login_hash_stress_at = time.monotonic()
-        elif attack_type == "GET_SEARCH":
-            # handle_api_search sẽ chạy SQLite recursive CTE scan thật khi use_cache=False
-            with state_lock:
-                last_db_search_stress_at = time.monotonic()
-        elif is_bot:
-            # HTTP/JSON Flood chung: xác thực token bằng PBKDF2 thật
-            with state_lock:
-                last_general_flood_at = time.monotonic()
-            hashlib.pbkdf2_hmac("sha256", str(time.monotonic()).encode(), b"session_verify", 180_000)
-    else:
-        with state_lock:
-            _active_query_buffers.clear()
-            ram_stress_buffers.clear()
 
 
 def check_rate_limit(identity_key: str, limit_per_sec: float = RATE_LIMIT_PER_SEC) -> bool:
@@ -247,28 +217,17 @@ def record_login_result(client_ip: str, success: bool) -> None:
             entry[1] = now + LOGIN_LOCKOUT_SEC
 
 
-def _is_db_search_contended() -> bool:
-    with state_lock:
-        return (not defense_enabled) and ((time.monotonic() - last_db_search_stress_at) < 2.5)
-
-
 def handle_api_products(conn) -> tuple[int, dict]:
     """Lấy danh sách sản phẩm từ SQLite."""
-    def _query():
+    with db_lock:
         cursor = conn.cursor()
         cursor.execute("SELECT id, name, category, price, stock, image_icon, description FROM products")
-        return [dict(row) for row in cursor.fetchall()]
-
-    if _is_db_search_contended():
-        with db_search_lock:
-            products = _query()
-    else:
-        products = _query()
+        products = [dict(row) for row in cursor.fetchall()]
     return 200, {"success": True, "products": products}
 
 
 def handle_api_search(conn, query_string: str, use_cache: bool = False) -> tuple[int, dict]:
-    """Tìm kiếm sản phẩm theo từ khóa từ SQLite, có cache khi bật WAF."""
+    """Tìm kiếm sản phẩm theo từ khóa trên bảng products + product_specs (SQLite thật)."""
     params = parse_qs(query_string)
     keyword = params.get("q", [""])[0].strip()
     if use_cache and len(keyword) > MAX_SEARCH_KEYWORD_LEN:
@@ -291,53 +250,20 @@ def handle_api_search(conn, query_string: str, use_cache: bool = False) -> tuple
                     "products": cached_entry[1],
                 }
 
-    def _query():
+    like_kw = f"%{keyword}%" if keyword else "%"
+    with db_lock:
         cursor = conn.cursor()
-        if use_cache:
-            if keyword:
-                cursor.execute(
-                    "SELECT id, name, category, price, stock, image_icon, description FROM products WHERE name LIKE ? OR category LIKE ?",
-                    (f"%{keyword}%", f"%{keyword}%")
-                )
-            else:
-                cursor.execute("SELECT id, name, category, price, stock, image_icon, description FROM products")
-            return [dict(row) for row in cursor.fetchall()]
-
-        # Khi tắt WAF (không cache/index): SQLite quét toàn bộ tập dữ liệu mở rộng thật
-        like_kw = f"%{keyword}%" if keyword else "%"
         cursor.execute(
             """
-            WITH RECURSIVE seq(x) AS (
-                SELECT 1
-                UNION ALL
-                SELECT x + 1 FROM seq WHERE x < 15000
-            )
-            SELECT p.id, p.name, p.category, p.price, p.stock, p.image_icon, p.description, seq.x
+            SELECT p.id, p.name, p.category, p.price, p.stock, p.image_icon, p.description
             FROM products p
-            CROSS JOIN seq
-            WHERE p.name LIKE ? OR p.category LIKE ?
+            JOIN product_specs s ON p.id = s.product_id
+            WHERE p.name LIKE ? OR p.category LIKE ? OR s.spec_text LIKE ?
+            GROUP BY p.id
             """,
-            (like_kw, like_kw),
+            (like_kw, like_kw, like_kw),
         )
-        raw_rows = [dict(row) for row in cursor.fetchall()]
-        with state_lock:
-            _active_query_buffers.append(raw_rows)
-
-        seen_ids: set[int] = set()
-        deduped: list[dict] = []
-        for row in raw_rows:
-            pid = row["id"]
-            if pid not in seen_ids:
-                seen_ids.add(pid)
-                row.pop("x", None)
-                deduped.append(row)
-        return deduped
-
-    if _is_db_search_contended():
-        with db_search_lock:
-            products = _query()
-    else:
-        products = _query()
+        products = [dict(row) for row in cursor.fetchall()]
 
     if use_cache:
         with state_lock:
@@ -359,22 +285,23 @@ def handle_api_register(conn, body_json: dict) -> tuple[int, dict]:
         return 400, {"success": False, "message": "Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu."}
 
     pwd_hash = hash_password(password)
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "INSERT INTO users (username, password_hash, fullname, email) VALUES (?, ?, ?, ?)",
-            (username, pwd_hash, fullname, email)
-        )
-        conn.commit()
-        return 201, {"success": True, "message": f"Đăng ký tài khoản '{username}' thành công!"}
-    except Exception as e:
-        if "UNIQUE" in str(e):
-            return 409, {"success": False, "message": f"Tài khoản '{username}' đã tồn tại!"}
-        return 500, {"success": False, "message": f"Lỗi cơ sở dữ liệu: {str(e)}"}
+    with db_lock:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO users (username, password_hash, fullname, email) VALUES (?, ?, ?, ?)",
+                (username, pwd_hash, fullname, email)
+            )
+            conn.commit()
+            return 201, {"success": True, "message": f"Đăng ký tài khoản '{username}' thành công!"}
+        except Exception as e:
+            if "UNIQUE" in str(e):
+                return 409, {"success": False, "message": f"Tài khoản '{username}' đã tồn tại!"}
+            return 500, {"success": False, "message": f"Lỗi cơ sở dữ liệu: {str(e)}"}
 
 
 def handle_api_login(conn, body_json: dict) -> tuple[int, dict, str | None]:
-    """Đăng nhập, kiểm tra hash SQLite và tạo session cookie."""
+    """Đăng nhập, kiểm tra hash PBKDF2, ghi audit log SQLite và tạo session cookie."""
     username = body_json.get("username", "").strip()
     password = body_json.get("password", "").strip()
 
@@ -382,9 +309,18 @@ def handle_api_login(conn, body_json: dict) -> tuple[int, dict, str | None]:
         return 400, {"success": False, "message": "Vui lòng nhập tên đăng nhập và mật khẩu."}, None
 
     pwd_hash = hash_password(password)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, username, fullname, email FROM users WHERE username = ? AND password_hash = ?", (username, pwd_hash))
-    user = cursor.fetchone()
+    with db_lock:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, username, fullname, email FROM users WHERE username = ? AND password_hash = ?",
+            (username, pwd_hash),
+        )
+        user = cursor.fetchone()
+        cursor.execute(
+            "INSERT INTO login_audit_logs (username, success) VALUES (?, ?)",
+            (username, 1 if user else 0),
+        )
+        conn.commit()
 
     if not user:
         return 401, {"success": False, "message": "Sai tên đăng nhập hoặc mật khẩu!"}, None
@@ -401,7 +337,7 @@ def handle_api_login(conn, body_json: dict) -> tuple[int, dict, str | None]:
 
 def handle_api_cart_get(conn, user_id: int) -> tuple[int, dict]:
     """Lấy danh sách giỏ hàng của user từ SQLite."""
-    def _query():
+    with db_lock:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT c.id, c.product_id, c.quantity, p.name, p.price, p.stock, p.category, p.image_icon
@@ -409,13 +345,7 @@ def handle_api_cart_get(conn, user_id: int) -> tuple[int, dict]:
             JOIN products p ON c.product_id = p.id
             WHERE c.user_id = ?
         """, (user_id,))
-        return [dict(row) for row in cursor.fetchall()]
-
-    if _is_db_search_contended():
-        with db_search_lock:
-            items = _query()
-    else:
-        items = _query()
+        items = [dict(row) for row in cursor.fetchall()]
     total_price = sum(item["price"] * item["quantity"] for item in items)
     total_count = sum(item["quantity"] for item in items)
     return 200, {"success": True, "items": items, "total_price": total_price, "total_count": total_count}
@@ -426,61 +356,65 @@ def handle_api_cart_add(conn, user_id: int, body_json: dict) -> tuple[int, dict]
     product_id = int(body_json.get("product_id", 0))
     qty = max(1, int(body_json.get("quantity", 1)))
 
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name, stock FROM products WHERE id = ?", (product_id,))
-    product = cursor.fetchone()
-    if not product:
-        return 404, {"success": False, "message": "Không tìm thấy sản phẩm."}
-    if product["stock"] <= 0:
-        return 400, {"success": False, "message": f"Sản phẩm '{product['name']}' đã hết hàng trong kho!"}
+    with db_lock:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, stock FROM products WHERE id = ?", (product_id,))
+        product = cursor.fetchone()
+        if not product:
+            return 404, {"success": False, "message": "Không tìm thấy sản phẩm."}
+        if product["stock"] <= 0:
+            return 400, {"success": False, "message": f"Sản phẩm '{product['name']}' đã hết hàng trong kho!"}
 
-    cursor.execute("""
-        INSERT INTO cart (user_id, product_id, quantity)
-        VALUES (?, ?, ?)
-        ON CONFLICT(user_id, product_id) DO UPDATE SET quantity = quantity + excluded.quantity
-    """, (user_id, product_id, qty))
-    conn.commit()
+        cursor.execute("""
+            INSERT INTO cart (user_id, product_id, quantity)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id, product_id) DO UPDATE SET quantity = quantity + excluded.quantity
+        """, (user_id, product_id, qty))
+        conn.commit()
     return handle_api_cart_get(conn, user_id)
 
 
 def handle_api_cart_remove(conn, user_id: int, body_json: dict) -> tuple[int, dict]:
     """Xóa sản phẩm khỏi giỏ hàng trong SQLite."""
     product_id = int(body_json.get("product_id", 0))
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM cart WHERE user_id = ? AND product_id = ?", (user_id, product_id))
-    conn.commit()
+    with db_lock:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM cart WHERE user_id = ? AND product_id = ?", (user_id, product_id))
+        conn.commit()
     return handle_api_cart_get(conn, user_id)
 
 
 def handle_api_cart_checkout(conn, user_id: int) -> tuple[int, dict]:
     """Đặt hàng: Trừ số lượng tồn kho (stock) trong SQLite và làm rỗng giỏ hàng."""
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT c.product_id, c.quantity, p.name, p.stock, p.price
-        FROM cart c
-        JOIN products p ON c.product_id = p.id
-        WHERE c.user_id = ?
-    """, (user_id,))
-    items = cursor.fetchall()
+    with db_lock:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT c.product_id, c.quantity, p.name, p.stock, p.price
+            FROM cart c
+            JOIN products p ON c.product_id = p.id
+            WHERE c.user_id = ?
+        """, (user_id,))
+        items = cursor.fetchall()
 
-    if not items:
-        return 400, {"success": False, "message": "Giỏ hàng đang trống, không thể thanh toán!"}
+        if not items:
+            return 400, {"success": False, "message": "Giỏ hàng đang trống, không thể thanh toán!"}
 
-    # Kiểm tra tồn kho trước khi trừ
-    for item in items:
-        if item["stock"] < item["quantity"]:
-            return 400, {
-                "success": False,
-                "message": f"Sản phẩm '{item['name']}' chỉ còn {item['stock']} sản phẩm trong kho (không đủ {item['quantity']})!"
-            }
+        # Kiểm tra tồn kho trước khi trừ
+        for item in items:
+            if item["stock"] < item["quantity"]:
+                return 400, {
+                    "success": False,
+                    "message": f"Sản phẩm '{item['name']}' chỉ còn {item['stock']} sản phẩm trong kho (không đủ {item['quantity']})!"
+                }
 
-    # Trừ số lượng tồn kho từng sản phẩm trong SQLite
-    for item in items:
-        cursor.execute("UPDATE products SET stock = stock - ? WHERE id = ?", (item["quantity"], item["product_id"]))
+        # Trừ số lượng tồn kho từng sản phẩm trong SQLite
+        for item in items:
+            cursor.execute("UPDATE products SET stock = stock - ? WHERE id = ?", (item["quantity"], item["product_id"]))
 
-    # Xóa giỏ hàng của user sau khi đặt hàng thành công
-    cursor.execute("DELETE FROM cart WHERE user_id = ?", (user_id,))
-    conn.commit()
+        # Xóa giỏ hàng của user sau khi đặt hàng thành công
+        cursor.execute("DELETE FROM cart WHERE user_id = ?", (user_id,))
+        conn.commit()
+
     with state_lock:
         search_query_cache.clear()
 
@@ -511,8 +445,9 @@ def _send_waf_rejection(client_sock: socket.socket, status_line: str, error_code
 
 def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, int], conn, tracked_ip: str | None = None):
     """Xử lý từng kết nối HTTP client gửi tới."""
-    global total_requests, blocked_requests, active_workers, defense_enabled
+    global total_requests, blocked_requests, active_workers, defense_enabled, _worker_cpu_seconds_total
 
+    worker_cpu_start = time.thread_time()
     with state_lock:
         active_workers += 1
 
@@ -569,7 +504,6 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
                 resp_json = json.dumps({"status": "BLOCKED", "reason": "RATE_LIMIT"}).encode("utf-8") + b"\n"
                 client_sock.sendall(resp_json)
                 return
-            apply_dos_workload(current_defense, is_bot=True)
             try:
                 json_msg = json.loads(req_data.decode("utf-8", errors="replace").strip())
                 cid = json_msg.get("client_id", "sim")
@@ -580,47 +514,36 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
             return
 
         # Tiếp tục đọc trọn vẹn HTTP header (chống Slowloris nhỏ giọt từng dòng header)
-        if b"\r\n\r\n" not in req_data:
-            global slowloris_active_conns
-            header_wait_started = time.monotonic()
-            with state_lock:
-                slowloris_active_conns += 1
+        while b"\r\n\r\n" not in req_data:
+            if current_defense:
+                remaining = header_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("SLOWLORIS_HEADER_TIMEOUT")
+                client_sock.settimeout(remaining)
             try:
-                while b"\r\n\r\n" not in req_data:
-                    if current_defense:
-                        remaining = header_deadline - time.monotonic()
-                        if remaining <= 0:
-                            raise TimeoutError("SLOWLORIS_HEADER_TIMEOUT")
-                        client_sock.settimeout(remaining)
-                    try:
-                        chunk = client_sock.recv(4096)
-                    except socket.timeout as exc:
-                        if current_defense:
-                            raise TimeoutError("SLOWLORIS_HEADER_TIMEOUT") from exc
-                        raise
-                    if not chunk:
-                        break
-                    req_data += chunk
-                    if current_defense and (
-                        len(req_data) > max_header_bytes
-                        or req_data.count(b"\r\n") > MAX_HEADER_LINES_WAF
-                    ):
-                        with state_lock:
-                            blocked_requests += 1
-                        _send_waf_rejection(
-                            client_sock,
-                            "431 Request Header Fields Too Large",
-                            "SLOWLORIS_HEADER_LIMIT",
-                            "WAF chặn kết nối: Quá nhiều dòng HTTP Header bất thường (Slowloris Protection)!",
-                        )
-                        return
-                    if len(req_data) > 65536:
-                        break
-            finally:
+                chunk = client_sock.recv(4096)
+            except socket.timeout as exc:
+                if current_defense:
+                    raise TimeoutError("SLOWLORIS_HEADER_TIMEOUT") from exc
+                raise
+            if not chunk:
+                break
+            req_data += chunk
+            if current_defense and (
+                len(req_data) > max_header_bytes
+                or req_data.count(b"\r\n") > MAX_HEADER_LINES_WAF
+            ):
                 with state_lock:
-                    slowloris_active_conns = max(0, slowloris_active_conns - 1)
-                    if (not current_defense) and ((time.monotonic() - header_wait_started) > 0.5) and ram_stress_buffers:
-                        ram_stress_buffers.clear()
+                    blocked_requests += 1
+                _send_waf_rejection(
+                    client_sock,
+                    "431 Request Header Fields Too Large",
+                    "SLOWLORIS_HEADER_LIMIT",
+                    "WAF chặn kết nối: Quá nhiều dòng HTTP Header bất thường (Slowloris Protection)!",
+                )
+                return
+            if len(req_data) > 65536:
+                break
 
         # Nếu client ngắt trước khi gửi xong kết thúc header (\r\n\r\n)
         if b"\r\n\r\n" not in req_data:
@@ -816,16 +739,6 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
                         )
                     client_sock.sendall(response)
                     return
-
-        # Mô phỏng tải sát thực tế theo từng loại tấn công (trừ API điều khiển/giám sát)
-        if path not in ("/api/toggle-defense", "/api/server-status"):
-            if path == "/api/login" and method == "POST":
-                attack_type = "POST_LOGIN"
-            elif path == "/api/search":
-                attack_type = "GET_SEARCH"
-            else:
-                attack_type = "GENERAL"
-            apply_dos_workload(current_defense, is_bot=is_bot, attack_type=attack_type)
 
         # Đọc nốt body nếu chưa đủ
         while len(body_part) < content_length:
@@ -1045,20 +958,6 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
         if path == "/api/server-status" and method == "GET":
             with state_lock:
                 cpu_pct, ram_mb = sample_real_telemetry()
-                now_mono = time.monotonic()
-                if not defense_enabled:
-                    if (now_mono - last_login_hash_stress_at) < 2.5:
-                        cpu_label = f"{cpu_pct:.1f}% (BĂM PBKDF2)"
-                    elif (now_mono - last_db_search_stress_at) < 2.5:
-                        cpu_label = f"{cpu_pct:.1f}% (QUÉT SQLITE)"
-                    elif slowloris_active_conns >= 2:
-                        cpu_label = f"{cpu_pct:.1f}% (CHỜ HEADER SOCKET)"
-                    elif (now_mono - last_general_flood_at) < 2.5 or active_workers >= 3:
-                        cpu_label = f"{cpu_pct:.1f}% (TẢI HTTP FLOOD)"
-                    else:
-                        cpu_label = f"{cpu_pct:.1f}% (BÌNH THƯỜNG)"
-                else:
-                    cpu_label = f"{cpu_pct:.1f}% (BÌNH THƯỜNG)"
                 status_payload = {
                     "defense_enabled": defense_enabled,
                     "total_requests": total_requests,
@@ -1067,7 +966,7 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
                     "max_workers": WORKER_THREADS,
                     "worker_utilization_pct": round((active_workers / WORKER_THREADS) * 100, 1),
                     "ram_consumed_mb": ram_mb,
-                    "cpu_load": cpu_label,
+                    "cpu_load": f"{cpu_pct:.1f}%",
                 }
             body_bytes = json.dumps(status_payload).encode("utf-8")
             resp = (
@@ -1082,11 +981,13 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
 
         # 10. API Bật/Tắt phòng thủ WAF
         if path == "/api/toggle-defense" and method == "POST":
+            global _last_cpu_time, _last_wall_time, _measured_cpu_pct
             with state_lock:
                 defense_enabled = not defense_enabled
                 if defense_enabled:
-                    ram_stress_buffers.clear()
-                    _active_query_buffers.clear()
+                    _last_cpu_time = _worker_cpu_seconds_total
+                    _last_wall_time = time.monotonic()
+                    _measured_cpu_pct = 0.0
                 login_failure_tracker.clear()
                 search_query_cache.clear()
                 new_state = defense_enabled
@@ -1125,7 +1026,9 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
             client_sock.close()
         except Exception:
             pass
+        worker_cpu_delta = max(0.0, time.thread_time() - worker_cpu_start)
         with state_lock:
+            _worker_cpu_seconds_total += worker_cpu_delta
             active_workers = max(0, active_workers - 1)
             if tracked_ip is not None:
                 active_ip_connections[tracked_ip] = max(0, active_ip_connections[tracked_ip] - 1)
@@ -1149,6 +1052,7 @@ def worker_loop(sock_queue: queue.Queue):
 
 def run_web_server():
     """Khởi chạy server bán hàng chính."""
+    global blocked_requests
     init_db()
 
     # Hàng đợi socket kết nối

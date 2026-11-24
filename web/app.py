@@ -58,6 +58,10 @@ class WebController:
                 import shop_server
                 with shop_server.state_lock:
                     shop_server.defense_enabled = enabled
+                    if enabled:
+                        shop_server._last_cpu_time = shop_server._worker_cpu_seconds_total
+                        shop_server._last_wall_time = shop_server.time.monotonic()
+                        shop_server._measured_cpu_pct = 0.5
                     shop_server.login_failure_tracker.clear()
                     shop_server.search_query_cache.clear()
             except Exception:
@@ -84,6 +88,8 @@ class WebController:
         slow_header_interval = self._as_float(
             payload.get("slow_header_interval", 5), "Slow-header interval"
         )
+        search_keyword = str(payload.get("search_keyword", "laptop")).strip()[:32] or "laptop"
+        login_username_prefix = str(payload.get("login_username_prefix", "lab_user")).strip()[:24] or "lab_user"
         limits = config.MODE_LIMITS[mode]
         max_clients = (
             config.MAX_SLOW_HEADER_CLIENTS
@@ -139,6 +145,8 @@ class WebController:
                 duration,
                 ip_mode=ip_mode,
                 slow_header_interval_seconds=slow_header_interval,
+                search_keyword=search_keyword,
+                login_username_prefix=login_username_prefix,
             )
             self._simulator = simulator
             self._simulation_config = {
@@ -151,6 +159,8 @@ class WebController:
                 "rate": rate,
                 "duration": duration,
                 "slow_header_interval": slow_header_interval,
+                "search_keyword": search_keyword,
+                "login_username_prefix": login_username_prefix,
             }
             self._simulation_error = None
             self._simulation_thread = threading.Thread(

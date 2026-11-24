@@ -18,18 +18,18 @@ class HttpLabClient:
             raise ValueError("HTTP lab scenarios chỉ được phép chạy trên loopback.")
         self.port = validate_port(port)
 
-    def send(self, scenario: str, client_id: str) -> tuple[bool, float]:
+    def send(self, scenario: str, client_id: str, *, search_keyword: str = "laptop", login_username_prefix: str = "lab_user") -> tuple[bool, float]:
         started_at = time.perf_counter()
         if scenario == "HTTP_GET_SEARCH":
             request = (
-                "GET /api/search?q=laptop HTTP/1.1\r\n"
+                f"GET /api/search?q={search_keyword} HTTP/1.1\r\n"
                 f"Host: {self.host}:{self.port}\r\n"
                 f"User-Agent: NetGuard-Lab/{client_id}\r\n"
                 "Connection: close\r\n\r\n"
             ).encode("ascii")
         elif scenario == "HTTP_POST_LOGIN":
             body = json.dumps(
-                {"username": f"lab_user_{client_id}", "password": "invalid-lab-password"}
+                {"username": f"{login_username_prefix}_{client_id}", "password": "invalid-lab-password"}
             ).encode("utf-8")
             request = (
                 "POST /api/login HTTP/1.1\r\n"
