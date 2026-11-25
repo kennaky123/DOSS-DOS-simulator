@@ -7,6 +7,7 @@ import json
 import logging
 import mimetypes
 import socket
+import sys
 import threading
 from dataclasses import asdict
 from http import HTTPStatus
@@ -195,14 +196,38 @@ class WebController:
             simulation_config = self._simulation_config
             simulation_error = self._simulation_error
 
+        defense_enabled = self._defense_enabled
+        shop_metrics: dict[str, Any] | None = None
+        shop_mod = sys.modules.get("shop_server")
+        shop_running = bool(shop_mod is not None and getattr(shop_mod, "server_running", False))
+        if shop_mod is not None:
+            with shop_mod.state_lock:
+                defense_enabled = bool(shop_mod.defense_enabled)
+                total_req = int(shop_mod.total_requests)
+                blocked_req = int(shop_mod.blocked_requests)
+                active_wk = int(shop_mod.active_workers)
+                last_reason = str(getattr(shop_mod, "last_block_reason", "-"))
+                shop_metrics = {
+                    "total_requests": total_req,
+                    "blocked_requests": blocked_req,
+                    "successful_requests": max(0, total_req - blocked_req),
+                    "failed_requests": blocked_req,
+                    "last_block_reason": last_reason,
+                    "defense_status": (
+                        "OVERLOADED"
+                        if (not defense_enabled and active_wk >= shop_mod.WORKER_THREADS)
+                        else ("NORMAL" if defense_enabled else "DISABLED")
+                    ),
+                }
+
         server_data: dict[str, Any] = {
-            "running": False,
-            "host": None,
-            "port": None,
-            "protocol": None,
-            "defenseEnabled": self._defense_enabled,
+            "running": shop_running,
+            "host": "127.0.0.1" if shop_running else None,
+            "port": shop_mod.PORT if shop_running else None,
+            "protocol": "HTTP" if shop_running else None,
+            "defenseEnabled": defense_enabled,
             "error": None,
-            "metrics": None,
+            "metrics": shop_metrics if shop_running else None,
         }
 
         simulation_data: dict[str, Any] = {

@@ -49,9 +49,11 @@ RATE_WINDOW_SEC = 2.0
 state_lock = threading.Lock()
 db_lock = threading.Lock()
 defense_enabled = False      # Mặc định tắt phòng thủ để kiểm tra hiệu ứng lag/xoay vòng
+server_running = False
 total_requests = 0
 blocked_requests = 0
 active_workers = 0
+last_block_reason = "-"
 
 # Rate limiter tracking: IP -> deque([timestamp])
 ip_request_history: dict[str, collections.deque] = collections.defaultdict(collections.deque)
@@ -228,13 +230,14 @@ def handle_api_products(conn) -> tuple[int, dict]:
 
 def handle_api_search(conn, query_string: str, use_cache: bool = False) -> tuple[int, dict]:
     """Tìm kiếm sản phẩm theo từ khóa trên bảng products + product_specs (SQLite thật)."""
+    global last_block_reason
     params = parse_qs(query_string)
     keyword = params.get("q", [""])[0].strip()
     if use_cache and len(keyword) > MAX_SEARCH_KEYWORD_LEN:
         return 400, {
             "success": False,
             "error": "SEARCH_QUERY_TOO_LONG",
-            "message": "WAF từ chối: Từ khóa tìm kiếm quá dài!",
+            "message": "WAF tu choi: Tu khoa tim kiem qua dai!",
         }
 
     cache_key = keyword.lower()
@@ -243,6 +246,7 @@ def handle_api_search(conn, query_string: str, use_cache: bool = False) -> tuple
         with state_lock:
             cached_entry = search_query_cache.get(cache_key)
             if cached_entry and (now - cached_entry[0]) < SEARCH_CACHE_TTL_SEC:
+                last_block_reason = "200 SEARCH_CACHE_HIT"
                 return 200, {
                     "success": True,
                     "keyword": keyword,
@@ -445,7 +449,7 @@ def _send_waf_rejection(client_sock: socket.socket, status_line: str, error_code
 
 def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, int], conn, tracked_ip: str | None = None):
     """Xử lý từng kết nối HTTP client gửi tới."""
-    global total_requests, blocked_requests, active_workers, defense_enabled, _worker_cpu_seconds_total
+    global total_requests, blocked_requests, active_workers, defense_enabled, _worker_cpu_seconds_total, last_block_reason
 
     worker_cpu_start = time.thread_time()
     with state_lock:
@@ -484,11 +488,12 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
                 if current_defense:
                     with state_lock:
                         blocked_requests += 1
+                        last_block_reason = "431 SLOWLORIS_HEADER_LIMIT"
                     _send_waf_rejection(
                         client_sock,
                         "431 Request Header Fields Too Large",
                         "SLOWLORIS_HEADER_TOO_LARGE",
-                        "WAF chặn kết nối: HTTP Header vượt quá kích thước cho phép!",
+                        "WAF chan ket noi: HTTP Header vuot qua kich thuoc cho phep!",
                     )
                     return
                 break
@@ -501,6 +506,7 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
             if current_defense and not check_rate_limit(f"bot:{client_ip}", 3.0):
                 with state_lock:
                     blocked_requests += 1
+                    last_block_reason = "429 WAF_RATE_LIMIT"
                 resp_json = json.dumps({"status": "BLOCKED", "reason": "RATE_LIMIT"}).encode("utf-8") + b"\n"
                 client_sock.sendall(resp_json)
                 return
@@ -535,11 +541,12 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
             ):
                 with state_lock:
                     blocked_requests += 1
+                    last_block_reason = "431 SLOWLORIS_HEADER_LIMIT"
                 _send_waf_rejection(
                     client_sock,
                     "431 Request Header Fields Too Large",
                     "SLOWLORIS_HEADER_LIMIT",
-                    "WAF chặn kết nối: Quá nhiều dòng HTTP Header bất thường (Slowloris Protection)!",
+                    "WAF chan ket noi: Qua nhieu dong HTTP Header bat thuong (Slowloris Protection)!",
                 )
                 return
             if len(req_data) > 65536:
@@ -550,11 +557,12 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
             if current_defense:
                 with state_lock:
                     blocked_requests += 1
+                    last_block_reason = "408 SLOWLORIS_INCOMPLETE_HEADER"
                 _send_waf_rejection(
                     client_sock,
                     "408 Request Timeout",
                     "SLOWLORIS_INCOMPLETE_HEADER",
-                    "WAF ngắt kết nối: HTTP Header chưa hoàn chỉnh (Slowloris Protection)!",
+                    "WAF ngat ket noi: HTTP Header chua hoan chinh (Slowloris Protection)!",
                 )
             return
 
@@ -661,11 +669,12 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
                 if not check_rate_limit(f"search:{target_identity}", 1.5 if is_bot else SEARCH_RATE_LIMIT_PER_SEC):
                     with state_lock:
                         blocked_requests += 1
+                        last_block_reason = "429 SEARCH_FLOOD_BLOCKED"
                     _send_waf_rejection(
                         client_sock,
                         "429 Too Many Requests",
                         "SEARCH_FLOOD_BLOCKED",
-                        "WAF chặn truy vấn: Tần suất tìm kiếm /api/search quá cao (Database Search Flood Protection)!",
+                        "WAF chan truy van: Tan suat tim kiem /api/search qua cao (Database Search Flood Protection)!",
                     )
                     return
 
@@ -674,21 +683,23 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
                 if is_login_locked(target_identity):
                     with state_lock:
                         blocked_requests += 1
+                        last_block_reason = "429 LOGIN_BRUTEFORCE_LOCKED"
                     _send_waf_rejection(
                         client_sock,
                         "429 Too Many Requests",
                         "LOGIN_BRUTEFORCE_LOCKED",
-                        "WAF khóa đăng nhập tạm thời (30s) do sai mật khẩu liên tiếp (Asymmetric Login Flood Protection)!",
+                        "WAF khoa dang nhap tam thoi (30s) do sai mat khau lien tiep (Asymmetric Login Flood Protection)!",
                     )
                     return
                 if not check_rate_limit(f"login:{target_identity}", 1.0 if is_bot else LOGIN_RATE_LIMIT_PER_SEC):
                     with state_lock:
                         blocked_requests += 1
+                        last_block_reason = "429 LOGIN_FLOOD_BLOCKED"
                     _send_waf_rejection(
                         client_sock,
                         "429 Too Many Requests",
                         "LOGIN_FLOOD_BLOCKED",
-                        "WAF chặn đăng nhập: Phát hiện spam POST /api/login (Asymmetric Login Flood Protection)!",
+                        "WAF chan dang nhap: Phat hien spam POST /api/login (Asymmetric Login Flood Protection)!",
                     )
                     return
 
@@ -697,7 +708,8 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
             if not check_rate_limit(rate_key, allowed_rate):
                 with state_lock:
                     blocked_requests += 1
-                resp_body = json.dumps({"error": "TOO_MANY_REQUESTS", "message": "WAF phát hiện tần suất request bất thường (DDoS Protection)!"}).encode("utf-8")
+                    last_block_reason = "429 WAF_RATE_LIMIT"
+                resp_body = json.dumps({"error": "TOO_MANY_REQUESTS", "message": "WAF phat hien tan suat request bat thuong (DDoS Protection)!"}).encode("utf-8")
                 response = (
                     b"HTTP/1.1 429 Too Many Requests\r\n"
                     b"Content-Type: application/json; charset=utf-8\r\n"
@@ -715,11 +727,12 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
                 if not verify_js_clearance_token(clearance_cookie, client_ip):
                     with state_lock:
                         blocked_requests += 1
+                        last_block_reason = "403/503 JS_CHALLENGE"
                     if path.startswith("/api/"):
                         resp_body = json.dumps({
                             "error": "JS_CHALLENGE_REQUIRED",
-                            "message": "WAF yêu cầu xác minh trình duyệt (JS Challenge). Hãy tải lại trang!"
-                        }, ensure_ascii=False).encode("utf-8")
+                            "message": "WAF yeu cau xac minh trinh duyet (JS Challenge). Hay tai lai trang!"
+                        }).encode("utf-8")
                         response = (
                             b"HTTP/1.1 403 Forbidden\r\n"
                             b"Content-Type: application/json; charset=utf-8\r\n"
@@ -962,6 +975,7 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
                     "defense_enabled": defense_enabled,
                     "total_requests": total_requests,
                     "blocked_requests": blocked_requests,
+                    "last_block_reason": last_block_reason,
                     "active_workers": active_workers,
                     "max_workers": WORKER_THREADS,
                     "worker_utilization_pct": round((active_workers / WORKER_THREADS) * 100, 1),
@@ -984,6 +998,7 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
             global _last_cpu_time, _last_wall_time, _measured_cpu_pct
             with state_lock:
                 defense_enabled = not defense_enabled
+                last_block_reason = "-"
                 if defense_enabled:
                     _last_cpu_time = _worker_cpu_seconds_total
                     _last_wall_time = time.monotonic()
@@ -1008,11 +1023,12 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
     except TimeoutError:
         with state_lock:
             blocked_requests += 1
+            last_block_reason = "408 SLOWLORIS_HEADER_TIMEOUT"
         _send_waf_rejection(
             client_sock,
             "408 Request Timeout",
             "SLOWLORIS_HEADER_TIMEOUT",
-            f"WAF ngắt kết nối: Gửi HTTP Header quá chậm (vượt quá {HEADER_READ_TIMEOUT_SEC}s — Slowloris Protection)!",
+            f"WAF ngat ket noi: Gui HTTP Header qua cham (vuot qua {HEADER_READ_TIMEOUT_SEC}s - Slowloris Protection)!",
         )
     except Exception as e:
         import traceback
@@ -1052,7 +1068,7 @@ def worker_loop(sock_queue: queue.Queue):
 
 def run_web_server():
     """Khởi chạy server bán hàng chính."""
-    global blocked_requests
+    global blocked_requests, last_block_reason, server_running
     init_db()
 
     # Hàng đợi socket kết nối
@@ -1069,6 +1085,7 @@ def run_web_server():
     server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_sock.bind((HOST, PORT))
     server_sock.listen(MAX_QUEUE_BACKLOG)
+    server_running = True
 
     print("=" * 65)
     print("🚀 TECHSTORE - HỆ THỐNG WEB BÁN HÀNG E-COMMERCE CHÂN THỰC")
@@ -1096,6 +1113,7 @@ def run_web_server():
                 if waf_on:
                     if active_ip_connections[client_ip] >= MAX_CONCURRENT_CONNS_PER_IP:
                         blocked_requests += 1
+                        last_block_reason = "429 SLOWLORIS_CONN_LIMIT"
                         too_many_conns = True
                     else:
                         active_ip_connections[client_ip] += 1
@@ -1109,7 +1127,7 @@ def run_web_server():
                     client_sock,
                     "429 Too Many Requests",
                     "SLOWLORIS_CONN_LIMIT",
-                    f"WAF chặn kết nối: Quá {MAX_CONCURRENT_CONNS_PER_IP} kết nối mở đồng thời từ IP {client_ip} (Slowloris Protection)!",
+                    f"WAF chan ket noi: Qua {MAX_CONCURRENT_CONNS_PER_IP} ket noi mo dong thoi tu IP {client_ip} (Slowloris Protection)!",
                 )
                 try:
                     client_sock.close()
@@ -1133,6 +1151,7 @@ def run_web_server():
     except KeyboardInterrupt:
         print("\n[Server] Đang tắt web server...")
     finally:
+        server_running = False
         server_sock.close()
 
 

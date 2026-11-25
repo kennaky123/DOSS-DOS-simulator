@@ -387,6 +387,9 @@ function startServerMonitoring() {
         document.getElementById("workerStats").textContent = `${data.active_workers} / ${data.max_workers} (${data.worker_utilization_pct}%)`;
         document.getElementById("totalReqStats").textContent = data.total_requests;
         document.getElementById("blockedReqStats").textContent = data.blocked_requests;
+        if (document.getElementById("wafRuleStats")) {
+          document.getElementById("wafRuleStats").textContent = data.last_block_reason || "-";
+        }
         if (document.getElementById("cpuStats")) {
           document.getElementById("cpuStats").textContent = data.cpu_load || "0.0%";
           const cpuVal = parseFloat(data.cpu_load) || 0;

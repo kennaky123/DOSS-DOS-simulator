@@ -74,9 +74,6 @@ function render(data) {
   $('gauge').style.setProperty('--value', successRate);
   setText('defenseState', defense === 'OVERLOADED' ? 'OVERLOADED (SẬP)' : defense);
   $('defenseState').className = `shield-state ${defense.toLowerCase()}`;
-  const toggleBtn = $('toggleDefense');
-  toggleBtn.textContent = currentDefenseEnabled ? 'Tắt phòng thủ (Demo sập)' : 'Bật phòng thủ (Bảo vệ)';
-  toggleBtn.className = `ghost toggle-defense ${currentDefenseEnabled ? 'danger' : 'enable-defense'}`;
 
   setText('sent', sim.sent || 0);
   setText('simSuccessful', sim.successful || 0);
@@ -109,14 +106,6 @@ simulationForm.addEventListener('submit', async (event) => {
 $('stopSimulation').addEventListener('click', async () => {
   try { await request('/api/simulation/stop'); toast('Simulation đã dừng.'); await refresh(); }
   catch (error) { toast(error.message, true); }
-});
-$('toggleDefense').addEventListener('click', async () => {
-  try {
-    const nextState = !currentDefenseEnabled;
-    await request('/api/defense/toggle', {enabled: nextState});
-    toast(nextState ? 'Đã BẬT phòng thủ bảo vệ server.' : 'Đã TẮT phòng thủ (chế độ dễ bị DoS làm quá tải).');
-    await refresh();
-  } catch (error) { toast(error.message, true); }
 });
 
 function syncIpMode(notify = false) {
