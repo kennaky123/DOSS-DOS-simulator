@@ -42,6 +42,7 @@ HOST = "0.0.0.0"             # Lắng nghe trên mọi card mạng (cho phép m�
 PORT = 5000
 WORKER_THREADS = 2           # 2 luồng xử lý đồng thời (tương đương micro-instance 1 vCPU)
 MAX_QUEUE_BACKLOG = 8        # Hàng đợi socket nhỏ gọn
+UPSTREAM_RESPONSE_TIMEOUT_SEC = 10.0  # Tra 504 Gateway Timeout neu yeu cau cho qua 10 giay
 RATE_LIMIT_PER_SEC = 10      # Ngưỡng chặn DDoS: tối đa 10 request/giây/IP
 RATE_WINDOW_SEC = 2.0
 
@@ -76,6 +77,8 @@ SEARCH_RATE_LIMIT_PER_SEC = 4.0     # Tối đa 4 yêu cầu tìm kiếm/giây/I
 SEARCH_CACHE_TTL_SEC = 30.0         # Cache kết quả tìm kiếm SQLite trong 30 giây
 MAX_SEARCH_KEYWORD_LEN = 64         # Giới hạn độ dài từ khóa tìm kiếm
 search_query_cache: dict[str, tuple[float, list[dict]]] = {}
+PAGE_CACHE_TTL_SEC = 30.0           # Cache HTML trang chu/SSR trong 30 giay khi bat WAF
+page_render_cache: dict[str, tuple[float, bytes]] = {}
 
 LOGIN_RATE_LIMIT_PER_SEC = 1.5      # Tối đa 1.5 yêu cầu POST /api/login mỗi giây
 LOGIN_MAX_FAILURES = 5              # Khóa tạm thời sau 5 lần đăng nhập thất bại liên tiếp
@@ -278,6 +281,58 @@ def handle_api_search(conn, query_string: str, use_cache: bool = False) -> tuple
     return 200, {"success": True, "keyword": keyword, "products": products}
 
 
+def render_storefront_page(conn, path: str, use_cache: bool = False) -> bytes:
+    """Render trang HTML kèm truy vấn SQLite và băm ETag nội dung danh mục (bỏ qua khi hit Page Cache)."""
+    if use_cache:
+        now = time.monotonic()
+        with state_lock:
+            cached = page_render_cache.get(path)
+            if cached and (now - cached[0]) < PAGE_CACHE_TTL_SEC:
+                return cached[1]
+
+    index_path = STATIC_DIR / "index.html"
+    if not index_path.exists():
+        return b""
+
+    with db_lock:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT p.id, p.stock, s.spec_text
+            FROM products p
+            JOIN product_specs s ON p.id = s.product_id
+            WHERE s.spec_text LIKE ?
+            ORDER BY p.id
+            """,
+            ("%TechStore%",),
+        )
+        spec_rows = cursor.fetchall()
+
+    product_stocks = {int(row["id"]): int(row["stock"]) for row in spec_rows}
+    total_products = len(product_stocks)
+    total_specs = len(spec_rows)
+    total_stock = sum(product_stocks.values())
+    spec_digest = "|".join(row["spec_text"] for row in spec_rows[:4000]).encode("utf-8")
+    ssr_etag = hashlib.pbkdf2_hmac("sha256", spec_digest, b"techstore_ssr_etag", 350_000).hex()[:16]
+
+    raw_html = index_path.read_bytes()
+    meta_tag = (
+        f'<meta name="ssr-catalog-summary" content="products={total_products};specs={total_specs};stock={total_stock};etag={ssr_etag}">\n'
+    ).encode("utf-8")
+    if b"</head>" in raw_html:
+        rendered = raw_html.replace(b"</head>", meta_tag + b"</head>", 1)
+    else:
+        rendered = raw_html
+
+    if use_cache:
+        with state_lock:
+            if len(page_render_cache) > 32:
+                page_render_cache.clear()
+            page_render_cache[path] = (time.monotonic(), rendered)
+
+    return rendered
+
+
 def handle_api_register(conn, body_json: dict) -> tuple[int, dict]:
     """Đăng ký tài khoản mới và lưu vào SQLite."""
     username = body_json.get("username", "").strip()
@@ -421,6 +476,7 @@ def handle_api_cart_checkout(conn, user_id: int) -> tuple[int, dict]:
 
     with state_lock:
         search_query_cache.clear()
+        page_render_cache.clear()
 
     import random
     order_id = f"DH-{random.randint(100000, 999999)}"
@@ -447,15 +503,38 @@ def _send_waf_rejection(client_sock: socket.socket, status_line: str, error_code
         pass
 
 
-def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, int], conn, tracked_ip: str | None = None):
+def _check_gateway_timeout(client_sock: socket.socket, queued_at: float | None) -> bool:
+    """Trả về 504 Gateway Timeout nếu thời gian chờ và xử lý vượt quá 10 giây."""
+    if queued_at is not None and (time.monotonic() - queued_at) >= UPSTREAM_RESPONSE_TIMEOUT_SEC:
+        _send_waf_rejection(
+            client_sock,
+            "504 Gateway Timeout",
+            "GATEWAY_TIMEOUT",
+            f"504 Gateway Timeout: May chu khong phan hoi trong {int(UPSTREAM_RESPONSE_TIMEOUT_SEC)}s!",
+        )
+        return True
+    return False
+
+
+def process_client_socket(
+    client_sock: socket.socket,
+    client_addr: tuple[str, int],
+    conn,
+    tracked_ip: str | None = None,
+    queued_at: float | None = None,
+):
     """Xử lý từng kết nối HTTP client gửi tới."""
     global total_requests, blocked_requests, active_workers, defense_enabled, _worker_cpu_seconds_total, last_block_reason
 
     worker_cpu_start = time.thread_time()
+    current_defense = False
     with state_lock:
         active_workers += 1
 
     try:
+        if _check_gateway_timeout(client_sock, queued_at):
+            return
+
         client_ip = client_addr[0]
 
         with state_lock:
@@ -465,7 +544,7 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
         # Slowloris Defense: giới hạn tổng thời gian đọc HTTP header & kích thước header khi bật WAF
         header_deadline = time.monotonic() + (HEADER_READ_TIMEOUT_SEC if current_defense else 15.0)
         max_header_bytes = MAX_HEADER_BYTES_WAF if current_defense else 65536
-        client_sock.settimeout(HEADER_READ_TIMEOUT_SEC if current_defense else 5.0)
+        client_sock.settimeout(HEADER_READ_TIMEOUT_SEC if current_defense else 15.0)
 
         # Đọc HTTP Request Header hoặc JSON Request
         req_data = b""
@@ -768,11 +847,12 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
                 current_user = sessions.get(token)
 
         # Xử lý các Route
-        # 1. Trang chủ HTML và các route giao diện
+        if _check_gateway_timeout(client_sock, queued_at):
+            return
+        # 1. Trang chủ HTML và các route giao diện (SSR truy vấn DB thật khi tắt cache/WAF)
         if path in ("/", "/index.html", "/home", "/products", "/search", "/cart", "/checkout", "/login") and method == "GET":
-            index_path = STATIC_DIR / "index.html"
-            if index_path.exists():
-                content = index_path.read_bytes()
+            content = render_storefront_page(conn, path, use_cache=current_defense)
+            if content:
                 resp = (
                     b"HTTP/1.1 200 OK\r\n"
                     b"Content-Type: text/html; charset=utf-8\r\n"
@@ -1005,6 +1085,7 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
                     _measured_cpu_pct = 0.0
                 login_failure_tracker.clear()
                 search_query_cache.clear()
+                page_render_cache.clear()
                 new_state = defense_enabled
             body_bytes = json.dumps({"defense_enabled": new_state}).encode("utf-8")
             resp = (
@@ -1021,15 +1102,23 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
         client_sock.sendall(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
 
     except TimeoutError:
-        with state_lock:
-            blocked_requests += 1
-            last_block_reason = "408 SLOWLORIS_HEADER_TIMEOUT"
-        _send_waf_rejection(
-            client_sock,
-            "408 Request Timeout",
-            "SLOWLORIS_HEADER_TIMEOUT",
-            f"WAF ngat ket noi: Gui HTTP Header qua cham (vuot qua {HEADER_READ_TIMEOUT_SEC}s - Slowloris Protection)!",
-        )
+        if current_defense:
+            with state_lock:
+                blocked_requests += 1
+                last_block_reason = "408 SLOWLORIS_HEADER_TIMEOUT"
+            _send_waf_rejection(
+                client_sock,
+                "408 Request Timeout",
+                "SLOWLORIS_HEADER_TIMEOUT",
+                f"WAF ngat ket noi: Gui HTTP Header qua cham (vuot qua {HEADER_READ_TIMEOUT_SEC}s - Slowloris Protection)!",
+            )
+        else:
+            _send_waf_rejection(
+                client_sock,
+                "408 Request Timeout",
+                "REQUEST_TIMEOUT",
+                "408 Request Timeout: Ket noi cho qua lau khong gui du du lieu!",
+            )
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -1050,16 +1139,107 @@ def process_client_socket(client_sock: socket.socket, client_addr: tuple[str, in
                 active_ip_connections[tracked_ip] = max(0, active_ip_connections[tracked_ip] - 1)
 
 
-def worker_loop(sock_queue: queue.Queue):
+class PendingConnectionQueue:
+    """Hàng đợi socket hỗ trợ quét các kết nối chờ quá UPSTREAM_RESPONSE_TIMEOUT_SEC."""
+
+    def __init__(self, maxsize: int = 0) -> None:
+        self._maxsize = maxsize
+        self._items: collections.deque = collections.deque()
+        self._cond = threading.Condition()
+
+    def put(self, item, block: bool = True, timeout: float | None = None) -> None:
+        with self._cond:
+            if self._maxsize > 0 and len(self._items) >= self._maxsize:
+                if not block:
+                    raise queue.Full
+                if timeout is None:
+                    while len(self._items) >= self._maxsize:
+                        self._cond.wait()
+                else:
+                    deadline = time.monotonic() + timeout
+                    while len(self._items) >= self._maxsize:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise queue.Full
+                        self._cond.wait(remaining)
+            self._items.append(item)
+            self._cond.notify()
+
+    def get(self):
+        with self._cond:
+            while not self._items:
+                self._cond.wait()
+            item = self._items.popleft()
+            self._cond.notify()
+            return item
+
+    def pop_expired(self, timeout_sec: float) -> list:
+        with self._cond:
+            now = time.monotonic()
+            expired = []
+            kept = []
+            for item in self._items:
+                if (
+                    len(item) == 4
+                    and item[0] is not None
+                    and item[3] is not None
+                    and (now - item[3]) >= timeout_sec
+                ):
+                    expired.append(item)
+                else:
+                    kept.append(item)
+            if expired:
+                self._items = collections.deque(kept)
+                self._cond.notify_all()
+            return expired
+
+    def task_done(self) -> None:
+        pass
+
+
+def gateway_timeout_watchdog(
+    sock_queue: PendingConnectionQueue,
+    stop_event: threading.Event,
+    poll_interval: float = 0.25,
+) -> None:
+    """Chủ động trả 504 Gateway Timeout cho các kết nối nằm chờ quá lâu trong hàng đợi."""
+    while not stop_event.wait(poll_interval):
+        expired_items = sock_queue.pop_expired(UPSTREAM_RESPONSE_TIMEOUT_SEC)
+        for client_sock, _client_addr, tracked_ip, _queued_at in expired_items:
+            _send_waf_rejection(
+                client_sock,
+                "504 Gateway Timeout",
+                "GATEWAY_TIMEOUT",
+                f"504 Gateway Timeout: May chu khong phan hoi trong {int(UPSTREAM_RESPONSE_TIMEOUT_SEC)}s!",
+            )
+            try:
+                client_sock.shutdown(socket.SHUT_WR)
+            except Exception:
+                pass
+            try:
+                client_sock.close()
+            except Exception:
+                pass
+            if tracked_ip is not None:
+                with state_lock:
+                    active_ip_connections[tracked_ip] = max(0, active_ip_connections[tracked_ip] - 1)
+
+
+def worker_loop(sock_queue: PendingConnectionQueue | queue.Queue):
     """Vòng lặp của từng worker thread trong Pool."""
     # Mỗi worker thread duy trì 1 connection riêng tới SQLite
     conn = get_connection()
     while True:
         try:
-            client_sock, client_addr, tracked_ip = sock_queue.get()
+            item = sock_queue.get()
+            if len(item) == 4:
+                client_sock, client_addr, tracked_ip, queued_at = item
+            else:
+                client_sock, client_addr, tracked_ip = item
+                queued_at = None
             if client_sock is None:
                 break
-            process_client_socket(client_sock, client_addr, conn, tracked_ip=tracked_ip)
+            process_client_socket(client_sock, client_addr, conn, tracked_ip=tracked_ip, queued_at=queued_at)
             sock_queue.task_done()
         except Exception:
             pass
@@ -1072,7 +1252,15 @@ def run_web_server():
     init_db()
 
     # Hàng đợi socket kết nối
-    sock_queue = queue.Queue(maxsize=MAX_QUEUE_BACKLOG)
+    sock_queue = PendingConnectionQueue(maxsize=MAX_QUEUE_BACKLOG)
+    watchdog_stop = threading.Event()
+    watchdog_thread = threading.Thread(
+        target=gateway_timeout_watchdog,
+        args=(sock_queue, watchdog_stop),
+        name="GatewayTimeoutWatchdog",
+        daemon=True,
+    )
+    watchdog_thread.start()
 
     # Khởi tạo Thread Pool với số worker cố định
     workers = []
@@ -1136,8 +1324,8 @@ def run_web_server():
                 continue
 
             try:
-                # Đưa vào hàng đợi worker
-                sock_queue.put((client_sock, client_addr, tracked_ip), block=True, timeout=2.0)
+                # Đưa vào hàng đợi worker kèm thời điểm tiếp nhận để kiểm tra timeout 30s (504)
+                sock_queue.put((client_sock, client_addr, tracked_ip, time.monotonic()), block=True, timeout=2.0)
             except queue.Full:
                 if tracked_ip is not None:
                     with state_lock:
@@ -1151,6 +1339,7 @@ def run_web_server():
     except KeyboardInterrupt:
         print("\n[Server] Đang tắt web server...")
     finally:
+        watchdog_stop.set()
         server_running = False
         server_sock.close()
 

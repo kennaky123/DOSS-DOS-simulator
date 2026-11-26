@@ -12,8 +12,8 @@ from common.network_utils import validate_port
 class SlowHeadersClient:
     """Open one incomplete HTTP request, then finish it after a short hold."""
 
-    MAX_HOLD_SECONDS = 30
-    HEADER_INTERVAL_SECONDS = 5
+    MAX_HOLD_SECONDS = 300
+    HEADER_INTERVAL_SECONDS = 50
 
     def __init__(self, host: str, port: int) -> None:
         if host not in ("localhost", "127.0.0.1") and not host.startswith("127."):

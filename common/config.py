@@ -13,13 +13,13 @@ IP_MODES = ("SINGLE_IP", "MULTI_IP", "UDP_SPOOF")
 MAX_CLIENTS = 100
 MAX_REQUEST_RATE = 50.0  # request / client / giây
 MAX_DURATION = 300       # tối đa 300 giây (5 phút)
-MAX_SLOW_HEADER_CLIENTS = 20
-MAX_SLOW_HEADER_DURATION = 30
+MAX_SLOW_HEADER_CLIENTS = 200
+MAX_SLOW_HEADER_DURATION = 300
 MIN_SLOW_HEADER_INTERVAL = 1
-MAX_SLOW_HEADER_INTERVAL = 10
-MAX_HTTP_LAB_CLIENTS = 20
-MAX_HTTP_LAB_RATE = 10.0
-MAX_HTTP_LAB_DURATION = 30
+MAX_SLOW_HEADER_INTERVAL = 100
+MAX_HTTP_LAB_CLIENTS = 200
+MAX_HTTP_LAB_RATE = 100.0
+MAX_HTTP_LAB_DURATION = 300
 MAX_SERVER_REQUESTS_PER_SECOND = 2_500
 MAX_SOURCE_REQUESTS_PER_SECOND = 800
 MAX_LOGICAL_CLIENT_REQUESTS_PER_SECOND = 100
@@ -50,16 +50,16 @@ ACTIVE_CLIENT_WINDOW_SECONDS = 2.0
 LOG_FILE = "server.log"
 
 MODE_DEFAULTS = {
-    "NORMAL": {"clients": 2, "rate": 1.0, "duration": 10},
-    "FLASH_CROWD": {"clients": 35, "rate": 4.5, "duration": 15},
-    "DOS_SIMULATION": {"clients": 20, "rate": 5.0, "duration": 15},
-    "DDOS_SIMULATION": {"clients": 30, "rate": 6.0, "duration": 15},
+    "NORMAL": {"clients": 20, "rate": 1.0, "duration": 100},
+    "FLASH_CROWD": {"clients": 35, "rate": 4.5, "duration": 150},
+    "DOS_SIMULATION": {"clients": 200, "rate": 5.0, "duration": 150},
+    "DDOS_SIMULATION": {"clients": 300, "rate": 6.0, "duration": 150},
 }
 
 # Giới hạn riêng giúp các profile có mức tải khác nhau và vẫn an toàn.
 MODE_LIMITS = {
-    "NORMAL": {"clients": 10, "rate": 5.0},
-    "FLASH_CROWD": {"clients": 80, "rate": 20.0},
-    "DOS_SIMULATION": {"clients": 80, "rate": 30.0},
+    "NORMAL": {"clients": 100, "rate": 5.0},
+    "FLASH_CROWD": {"clients": 800, "rate": 20.0},
+    "DOS_SIMULATION": {"clients": 800, "rate": 30.0},
     "DDOS_SIMULATION": {"clients": 100, "rate": 40.0},
 }

@@ -147,13 +147,13 @@ def run_attack(mode: str, num_threads: int, duration_sec: int):
     }.get(mode, "HTTP GET Flood")
 
     print("\n" + "=" * 60)
-    print(f"🔥 BẮT ĐẦU TẤN CÔNG: {mode_name}")
-    print(f"🎯 Mục tiêu: http://{TARGET_HOST}:{TARGET_PORT}")
-    print(f"👥 Số luồng tấn công (Bot Threads): {num_threads}")
-    print(f"⏱️ Thời gian mô phỏng: {duration_sec} giây")
+    print(f" BẮT ĐẦU TẤN CÔNG: {mode_name}")
+    print(f" Mục tiêu: http://{TARGET_HOST}:{TARGET_PORT}")
+    print(f" Số luồng tấn công (Bot Threads): {num_threads}")
+    print(f" Thời gian mô phỏng: {duration_sec} giây")
     print("=" * 60)
-    print("👉 Hãy mở trình duyệt Chrome/Edge tại http://127.0.0.1:5000 và bấm F5.")
-    print("👉 BẠN SẼ THẤY VÒNG XOAY TRÊN TAB TRÌNH DUYỆT XOAY TÍT MÙ VÀ KHÔNG THỂ TẢI TRANG!")
+    print(" Hãy mở trình duyệt Chrome/Edge tại http://127.0.0.1:5000 và bấm F5.")
+    print(" BẠN SẼ THẤY VÒNG XOAY TRÊN TAB TRÌNH DUYỆT XOAY TÍT MÙ VÀ KHÔNG THỂ TẢI TRANG!")
     print("=" * 60)
 
     threads = []
@@ -178,15 +178,15 @@ def run_attack(mode: str, num_threads: int, duration_sec: int):
             t.join(1.0)
 
     print("\n" + "=" * 60)
-    print("🏁 KẾT THÚC ĐỢT TẤN CÔNG")
-    print(f"📊 Tổng số gói tin/request đã bắn: {requests_sent}")
-    print(f"📊 Số request bị từ chối/thất bại: {requests_failed}")
+    print(" KẾT THÚC ĐỢT TẤN CÔNG")
+    print(f" Tổng số gói tin/request đã bắn: {requests_sent}")
+    print(f" Số request bị từ chối/thất bại: {requests_failed}")
     print("=" * 60)
 
 
 def main():
     print("=" * 60)
-    print("⚡ CÔNG CỤ TẤN CÔNG THỰC NGHIỆM DoS / DDoS (LAYER 7)")
+    print(" CÔNG CỤ TẤN CÔNG THỰC NGHIỆM DoS / DDoS (LAYER 7)")
     print("=" * 60)
     print("Chọn hình thức tấn công:")
     print("  [1] HTTP GET Flood (Đánh sập trang chủ & API tìm kiếm SQLite)")
